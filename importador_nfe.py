@@ -129,10 +129,36 @@ def processar():
                             # em que você digitou o nome da coluna lá no Passo 2!
                         )
                         cursor.execute(sql, valores)
+                        
+                        # --- NOVIDADE: LEITURA DOS TOTAIS DA NOTA ---
+                    bloco_total = infNFe.find('.//nfe:total/nfe:ICMSTot', ns)
+                    if bloco_total is not None:
+                        tot_vbc = float(p('vBC', bloco_total, ns) or 0)
+                        tot_vicms = float(p('vICMS', bloco_total, ns) or 0)
+                        tot_vbcst = float(p('vBCST', bloco_total, ns) or 0)
+                        tot_vst = float(p('vST', bloco_total, ns) or 0)
+                        tot_vfcp = float(p('vFCP', bloco_total, ns) or 0)
+                        tot_vpis = float(p('vPIS', bloco_total, ns) or 0)
+                        tot_vcofins = float(p('vCOFINS', bloco_total, ns) or 0)
+                        tot_vnf = float(p('vNF', bloco_total, ns) or 0)
+                        
+                        sql_totais = """INSERT INTO tblNotasTotais (
+                            Chave_NFe, Periodo, Numero_NF, Data_Emissao, 
+                            Emitente_CNPJ, Emitente_Nome, 
+                            vBC, vICMS, vBCST, vST, vFCP, vPIS, vCOFINS, vNF
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                        
+                        valores_totais = (
+                            chave, periodo, n_nf, d_emi_dt,
+                            p('CNPJ', emit, ns), p('xNome', emit, ns),
+                            tot_vbc, tot_vicms, tot_vbcst, tot_vst, tot_vfcp, tot_vpis, tot_vcofins, tot_vnf
+                        )
+                        cursor.execute(sql_totais, valores_totais)
+                    # ---------------------------------------------
                     
                     print(f"✅ Nota {n_nf} importada.")
                     conn.commit()
-
+                    
                 except Exception as e_file:
                     print(f"❌ Erro no arquivo {arquivo}: {e_file}")
                     
