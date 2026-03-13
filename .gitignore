@@ -1,0 +1,36 @@
+# ==========================================
+# IGNORAR AMBIENTES VIRTUAIS
+# ==========================================
+venv/
+env/
+.env
+
+# ==========================================
+# IGNORAR ARQUIVOS GERADOS PELO PYINSTALLER
+# ==========================================
+dist/
+build/
+*.spec
+
+# ==========================================
+# IGNORAR ARQUIVOS CACHE DO PYTHON
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ==========================================
+# IGNORAR DADOS DA EMPRESA E DOWNLOADS
+# (Proteção para não subir arquivos da Cabral & Sousa para o Git)
+# ==========================================
+*.accdb
+*.mdb
+*.laccdb
+*.xml
+*.csv
+decreto_icms_ba.pdf
+
+# ==========================================
+# IGNORAR CONFIGURAÇÕES DO VS CODE
+# ==========================================
+.vscode/

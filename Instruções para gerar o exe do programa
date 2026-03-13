@@ -1,0 +1,11 @@
+Passo 1: Instalar o PyInstaller
+No terminal do VS Code, certifique-se de que o seu ambiente virtual (venv) está ativado e instale a biblioteca de compilação:
+
+Bash
+pip install pyinstaller
+Passo 2: Compilar o Executável
+Assim que a instalação terminar, execute o "comando mágico" que vai empacotar o Python, as bibliotecas (pandas, pyodbc, tkinter) e o seu código num único ficheiro:
+
+Bash
+pyinstaller --onefile --noconsole importador_nfe.py
+(Nota: O parâmetro --noconsole serve para que aquela janela preta de linha de comandos não apareça por trás das janelas de seleção do Windows, deixando a ferramenta com um aspeto 100% profissional).
