@@ -4,7 +4,8 @@ import pyodbc
 from datetime import datetime
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
+import sys
 
 # =======================================================================================
 # GUIA RÁPIDO PARA INICIANTES: COMO ADICIONAR NOVAS COLUNAS NO BANCO
@@ -25,12 +26,15 @@ def p(tag, root, ns):
         return None
 
 # 1. Adicione os parâmetros na função:
-def processar(pasta_xml, banco_access):
+def processar(pasta_xml, banco_access, barra_progresso=None):
     tempo_inicio = time.time()
     
-    # 2. Atualize a variável do banco (minúscula agora):
-    conn_str = f'DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={banco_access};'
+    # Conta total de arquivos XML para a barra de progresso
+    total_arquivos = sum(len([a for a in arq if a.lower().endswith('.xml')]) for _, _, arq in os.walk(pasta_xml))
+    arquivos_processados = 0
     
+    # 2. Atualize a variável do banco (minúscula agora):
+    conn_str = f'DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={banco_access};'    
     try:
         conn = pyodbc.connect(conn_str)
         cursor = conn.cursor()
@@ -187,6 +191,12 @@ def processar(pasta_xml, banco_access):
                     
                 except Exception as e_file:
                     print(f"❌ Erro no arquivo {arquivo}: {e_file}")
+                
+                # --- ADICIONE ESTAS 4 LINHAS AQUI ---
+                arquivos_processados += 1
+                if barra_progresso and total_arquivos > 0:
+                    barra_progresso['value'] = (arquivos_processados / total_arquivos) * 100
+                    barra_progresso.update_idletasks()
                     
         cursor.close()
         conn.close()
@@ -204,37 +214,108 @@ def processar(pasta_xml, banco_access):
     except Exception as e:
         print(f"🔥 Erro de conexão ou SQL: {e}")
 
+
+# --- CLASSE PARA REDIRECIONAR O PRINT PARA O TERMINAL DA TELA ---
+class RedirecionadorConsole:
+    def __init__(self, widget_texto):
+        self.widget_texto = widget_texto
+
+    def write(self, texto):
+        self.widget_texto.insert(tk.END, texto)
+        self.widget_texto.see(tk.END) # Rola automaticamente para baixo
+        self.widget_texto.update_idletasks()
+
+    def flush(self):
+        pass
+
 def iniciar_interface():
-    # Esconde a janela principal do Tkinter e foca nas caixas de diálogo
+    # Cria a janela principal
     root = tk.Tk()
-    root.withdraw() 
-    root.attributes("-topmost", True) 
+    root.title("Importador de XML")
+    root.geometry("650x550") # Janela aumentada para caber o terminal
+    root.resizable(False, False)
 
-    # Passo 1: Escolher a pasta dos XMLs
-    messagebox.showinfo("Passo 1 de 2", "Por favor, selecione a PASTA onde estão os arquivos XML das Notas Fiscais da Cabral & Sousa.")
-    pasta_xml = filedialog.askdirectory(title="Selecione a Pasta dos XMLs")
-    
-    if not pasta_xml:
-        print("❌ Operação cancelada. Nenhuma pasta de XML foi selecionada.")
-        return
+    # Variáveis para armazenar os caminhos escolhidos
+    pasta_var = tk.StringVar()
+    banco_var = tk.StringVar()
 
-    # Passo 2: Escolher o Banco de Dados
-    messagebox.showinfo("Passo 2 de 2", "Agora, selecione o arquivo do BANCO DE DADOS Access (.accdb) que receberá os dados.")
-    banco_access = filedialog.askopenfilename(
-        title="Selecione o Banco de Dados",
-        filetypes=[("Arquivos do Access", "*.accdb;*.mdb")]
-    )
-    
-    if not banco_access:
-        print("❌ Operação cancelada. Nenhum banco de dados foi selecionado.")
-        return
+    # --- FUNÇÕES DOS BOTÕES ---
+    def buscar_pasta():
+        pasta = filedialog.askdirectory(title="Selecione a Pasta dos XMLs")
+        if pasta: pasta_var.set(pasta)
 
-    # Inicia o processamento com os caminhos escolhidos
-    print(f"📂 Pasta XML: {pasta_xml}")
-    print(f"🗄️ Banco de Dados: {banco_access}")
-    print("-" * 50)
+    def buscar_banco():
+        banco = filedialog.askopenfilename(title="Selecione o Banco", filetypes=[("Access", "*.accdb;*.mdb")])
+        if banco: banco_var.set(banco)
+
+    def executar():
+        # Validação para não rodar vazio
+        if not pasta_var.get() or not banco_var.get():
+            messagebox.showwarning("Atenção", "Por favor, selecione a pasta e o banco antes de iniciar.")
+            return
+        
+        # Muda o visual do botão e zera a barra
+        btn_iniciar.config(text="Processando...", bg="#757575", state="disabled")
+        barra_progresso['value'] = 0
+        terminal.delete(1.0, tk.END) # Limpa o terminal antigo
+        root.update() 
+        
+        # Redireciona os prints do Python para a caixinha preta
+        stdout_original = sys.stdout
+        sys.stdout = RedirecionadorConsole(terminal)
+        
+        try:
+            processar(pasta_var.get(), banco_var.get(), barra_progresso)
+            messagebox.showinfo("Sucesso", "Importação concluída com sucesso! Verifique o log no terminal para mais detalhes.")
+        except Exception as e:
+            print(f"🔥 Erro crítico: {e}")
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+        finally:
+            # Restaura o sistema e o botão ao estado normal
+            sys.stdout = stdout_original 
+            btn_iniciar.config(text="Iniciar Importação", bg="#4CAF50", state="normal")
+
+    # --- LAYOUT DA TELA ---
+    style = ttk.Style()
+    if 'clam' in style.theme_names():
+        style.theme_use('clam')
+
+    # Cabeçalho
+    ttk.Label(root, text="Importador de XML", font=("Arial", 18, "bold")).pack(pady=(15, 5))
+    ttk.Label(root, text="Módulo de Importação de Notas Fiscais (XML para Access)", font=("Arial", 10)).pack(pady=(0, 15))
+
+    # Área de Seleção 1: Pasta
+    frame_pasta = ttk.LabelFrame(root, text=" 1. Pasta de Arquivos XML ", padding=(10, 10))
+    frame_pasta.pack(fill="x", padx=20, pady=5)
+    ttk.Entry(frame_pasta, textvariable=pasta_var, state="readonly", width=68).pack(side="left", padx=(0, 10))
+    ttk.Button(frame_pasta, text="Procurar...", command=buscar_pasta).pack(side="left")
+
+    # Área de Seleção 2: Banco de Dados
+    frame_banco = ttk.LabelFrame(root, text=" 2. Banco de Dados Access ", padding=(10, 10))
+    frame_banco.pack(fill="x", padx=20, pady=5)
+    ttk.Entry(frame_banco, textvariable=banco_var, state="readonly", width=68).pack(side="left", padx=(0, 10))
+    ttk.Button(frame_banco, text="Procurar...", command=buscar_banco).pack(side="left")
+
+    # Botão de Ação Principal
+    btn_iniciar = tk.Button(root, text="Iniciar Importação", font=("Arial", 12, "bold"), bg="#4CAF50", fg="white", command=executar, height=2)
+    btn_iniciar.pack(fill="x", padx=20, pady=10)
+
+    # --- ÁREA DO TERMINAL E BARRA DE PROGRESSO ---
+    frame_log = ttk.LabelFrame(root, text=" Progresso da Importação ", padding=(10, 10))
+    frame_log.pack(fill="both", expand=True, padx=20, pady=(0, 15))
+
+    barra_progresso = ttk.Progressbar(frame_log, orient="horizontal", mode="determinate")
+    barra_progresso.pack(fill="x", pady=(0, 5))
+
+    scroll = ttk.Scrollbar(frame_log)
+    scroll.pack(side="right", fill="y")
     
-    processar(pasta_xml, banco_access)
+    terminal = tk.Text(frame_log, height=8, bg="black", fg="#00FF00", font=("Consolas", 9), yscrollcommand=scroll.set)
+    terminal.pack(fill="both", expand=True)
+    scroll.config(command=terminal.yview)
+
+    # Inicia o programa
+    root.mainloop()
 
 if __name__ == "__main__":
     iniciar_interface()
