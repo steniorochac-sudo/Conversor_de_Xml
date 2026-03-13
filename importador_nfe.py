@@ -3,10 +3,8 @@ import xml.etree.ElementTree as ET
 import pyodbc
 from datetime import datetime
 import time
-
-# --- CONFIGURAÇÕES (USE O 'r' ANTES DAS ASPAS) ---
-PASTA_XML = r"C:\Users\StenioRochaCardoso\Cabral & Sousa Ltda\Intranet Cabral & Sousa - 🔎PÚBLICA\🏢 PÚBLICA - FISCAL\01 - STÊNIO ROCHA\Apuração de Impostos - Entrada\Xmls"
-BANCO_ACCESS = r'C:\Users\StenioRochaCardoso\Cabral & Sousa Ltda\Intranet Cabral & Sousa - 🔎PÚBLICA\🏢 PÚBLICA - FISCAL\01 - STÊNIO ROCHA\Apuração de Impostos - Entrada\Base_NF_ENTRADA.accdb'
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 # =======================================================================================
 # GUIA RÁPIDO PARA INICIANTES: COMO ADICIONAR NOVAS COLUNAS NO BANCO
@@ -26,9 +24,12 @@ def p(tag, root, ns):
     except:
         return None
 
-def processar():
+# 1. Adicione os parâmetros na função:
+def processar(pasta_xml, banco_access):
     tempo_inicio = time.time()
-    conn_str = f'DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={BANCO_ACCESS};'
+    
+    # 2. Atualize a variável do banco (minúscula agora):
+    conn_str = f'DRIVER={{Microsoft Access Driver (*.mdb, *.accdb)}};DBQ={banco_access};'
     
     try:
         conn = pyodbc.connect(conn_str)
@@ -43,7 +44,7 @@ def processar():
         # -----------------------------------
 
         # O os.walk varre a pasta principal e todas as subpastas dentro dela
-        for diretorio_atual, subpastas, arquivos in os.walk(PASTA_XML):
+        for diretorio_atual, subpastas, arquivos in os.walk(pasta_xml):
             for arquivo in arquivos:
                 if not arquivo.lower().endswith('.xml'): continue
                 
@@ -91,6 +92,26 @@ def processar():
                         icms_pcredsn = float(p('pCredSN', icms, ns) or 0)
                         icms_vcredicmssn = float(p('vCredICMSSN', icms, ns) or 0)
                         
+                        # 3. Extração das tags de ST e FCP Retido
+                        icms_vbcfcpstret = float(p('vBCFCPSTRet', icms, ns) or 0)
+                        icms_pfcpstret = float(p('pFCPSTRet', icms, ns) or 0)
+                        icms_pmvast = float(p('pMVAST', icms, ns) or 0)
+                        icms_vbcst = float(p('vBCST', icms, ns) or 0)
+                        icms_picmsst = float(p('pICMSST', icms, ns) or 0)
+                        icms_vicmsst = float(p('vICMSST', icms, ns) or 0)
+                        
+                        # 4. Extração das tags de PIS
+                        pis_cst = p('CST', imposto.find('.//nfe:PIS', ns), ns)
+                        pis_vbc = float(p('vBC', imposto.find('.//nfe:PIS', ns), ns) or 0)
+                        pis_ppis = float(p('pPIS', imposto.find('.//nfe:PIS', ns), ns) or 0)
+                        pis_vpis = float(p('vPIS', imposto.find('.//nfe:PIS', ns), ns) or 0)
+                        
+                        # 5. Extração das tags de COFINS
+                        cofins_cst = p('CST', imposto.find('.//nfe:COFINS', ns), ns)
+                        cofins_vbc = float(p('vBC', imposto.find('.//nfe:COFINS', ns), ns) or 0)
+                        cofins_pcofins = float(p('pCOFINS', imposto.find('.//nfe:COFINS', ns), ns) or 0)
+                        cofins_vcofins = float(p('vCOFINS', imposto.find('.//nfe:COFINS', ns), ns) or 0)
+                        
                         # ---> PASSO 1 (No Python): Extrair a nova informação do XML.
                         # Crie uma variável nova. Use 'p()' para buscar a tag.
                         # Se for texto, use: nova_variavel = p('NomeDaTag', det, ns)
@@ -103,10 +124,13 @@ def processar():
                             Destinatario_CNPJ, Destinatario_Nome, Destinatario_UF,
                             Produto_cProd, Produto_xProd, Produto_cEAN, CEST, Produto_NCM, Produto_CFOP, Unidade,
                             Produto_qCom, Produto_vUnCom, Produto_vProd, vIPI, Produto_vDesc, Produto_vFrete,
-                            ICMS_CST, ICMS_Item_vBC, ICMS_Item_pICMS, ICMS_Item_vICMS,
-                            ICMS_Item_pCredSN, ICMS_Item_vCredICMSSN,
-                            vPIS, vCOFINS, cStat                           
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                            vBCFCPSTRet, pFCPSTRet, ICMS_CST, ICMS_Item_vBC, ICMS_Item_pICMS, 
+                            ICMS_Item_vCredICMSSN, ICMS_Item_vICMS, ICMS_Item_pCredSN, 
+                            ICMS_pMVAST, vBC_ST, pICMSST, vICMSST,
+                            PIS_CST, PIS_vBC, PIS_pPIS, vPIS, 
+                            COFINS_CST, COFINS_vBC, COFINS_pCOFINS, vCOFINS, 
+                            cStat
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
                         # ---> PASSO 2: Digite o NOME EXATO da nova coluna do Access aqui, antes do 'cStat'
                         
                         # ---> PASSO 3: Para cada coluna nova que você adicionou no Passo 2,
@@ -120,10 +144,12 @@ def processar():
                             p('NCM', prod, ns), p('CFOP', prod, ns), p('uCom', prod, ns),
                             float(p('qCom', prod, ns) or 0), float(p('vUnCom', prod, ns) or 0), float(p('vProd', prod, ns) or 0),
                             float(p('vIPI', imposto, ns) or 0), float(p('vDesc', prod, ns) or 0), float(p('vFrete', prod, ns) or 0),
-                            p('CST', icms, ns) or p('CSOSN', icms, ns),
-                            icms_vbc, icms_picms, icms_vicms, 
-                            icms_pcredsn, icms_vcredicmssn, # <- Colunas exclusivas do Simples inseridas aqui
-                            float(p('vPIS', imposto, ns) or 0), float(p('vCOFINS', imposto, ns) or 0), "100"
+                            icms_vbcfcpstret, icms_pfcpstret, p('CST', icms, ns) or p('CSOSN', icms, ns), icms_vbc, icms_picms, 
+                            icms_vcredicmssn, icms_vicms, icms_pcredsn, 
+                            icms_pmvast, icms_vbcst, icms_picmsst, icms_vicmsst,
+                            pis_cst, pis_vbc, pis_ppis, pis_vpis, 
+                            cofins_cst, cofins_vbc, cofins_pcofins, cofins_vcofins, 
+                            "100"
                             
                             # ---> PASSO 4: Coloque sua 'nova_variavel' aqui, NA MESMA ORDEM 
                             # em que você digitou o nome da coluna lá no Passo 2!
@@ -178,5 +204,37 @@ def processar():
     except Exception as e:
         print(f"🔥 Erro de conexão ou SQL: {e}")
 
+def iniciar_interface():
+    # Esconde a janela principal do Tkinter e foca nas caixas de diálogo
+    root = tk.Tk()
+    root.withdraw() 
+    root.attributes("-topmost", True) 
+
+    # Passo 1: Escolher a pasta dos XMLs
+    messagebox.showinfo("Passo 1 de 2", "Por favor, selecione a PASTA onde estão os arquivos XML das Notas Fiscais da Cabral & Sousa.")
+    pasta_xml = filedialog.askdirectory(title="Selecione a Pasta dos XMLs")
+    
+    if not pasta_xml:
+        print("❌ Operação cancelada. Nenhuma pasta de XML foi selecionada.")
+        return
+
+    # Passo 2: Escolher o Banco de Dados
+    messagebox.showinfo("Passo 2 de 2", "Agora, selecione o arquivo do BANCO DE DADOS Access (.accdb) que receberá os dados.")
+    banco_access = filedialog.askopenfilename(
+        title="Selecione o Banco de Dados",
+        filetypes=[("Arquivos do Access", "*.accdb;*.mdb")]
+    )
+    
+    if not banco_access:
+        print("❌ Operação cancelada. Nenhum banco de dados foi selecionado.")
+        return
+
+    # Inicia o processamento com os caminhos escolhidos
+    print(f"📂 Pasta XML: {pasta_xml}")
+    print(f"🗄️ Banco de Dados: {banco_access}")
+    print("-" * 50)
+    
+    processar(pasta_xml, banco_access)
+
 if __name__ == "__main__":
-    processar()
+    iniciar_interface()
