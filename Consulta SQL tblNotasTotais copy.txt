@@ -1,0 +1,16 @@
+CREATE TABLE tblNotasTotais (
+    Chave_NFe TEXT (44) CONSTRAINT PrimaryKey PRIMARY KEY,
+    Periodo TEXT (20),
+    Numero_NF LONG,
+    Data_Emissao DATETIME,
+    Emitente_CNPJ TEXT (20),
+    Emitente_Nome TEXT (255),
+    vBC CURRENCY,
+    vICMS CURRENCY,
+    vBCST CURRENCY,
+    vST CURRENCY,
+    vFCP CURRENCY,
+    vPIS CURRENCY,
+    vCOFINS CURRENCY,
+    vNF CURRENCY
+);
