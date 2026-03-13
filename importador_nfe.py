@@ -6,6 +6,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import sys
+import extrator_mva
 
 # =======================================================================================
 # GUIA RÁPIDO PARA INICIANTES: COMO ADICIONAR NOVAS COLUNAS NO BANCO
@@ -274,6 +275,30 @@ def iniciar_interface():
             # Restaura o sistema e o botão ao estado normal
             sys.stdout = stdout_original 
             btn_iniciar.config(text="Iniciar Importação", bg="#4CAF50", state="normal")
+    
+    def executar_mva():
+        # Exige apenas que o banco esteja preenchido
+        if not banco_var.get():
+            messagebox.showwarning("Atenção", "Por favor, selecione o Banco de Dados Access antes de atualizar a MVA.")
+            return
+        
+        btn_mva.config(text="Baixando e Atualizando...", bg="#757575", state="disabled")
+        terminal.delete(1.0, tk.END)
+        root.update() 
+        
+        stdout_original = sys.stdout
+        sys.stdout = RedirecionadorConsole(terminal)
+        
+        try:
+            # Chama a função lá do outro arquivo passando o banco selecionado
+            extrator_mva.automatizar_mva(banco_var.get())
+            messagebox.showinfo("Sucesso", "Tabela de MVA atualizada com sucesso no banco de dados!")
+        except Exception as e:
+            print(f"🔥 Erro crítico: {e}")
+            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+        finally:
+            sys.stdout = stdout_original 
+            btn_mva.config(text="Atualizar Tabela MVA", bg="#2196F3", state="normal")
 
     # --- LAYOUT DA TELA ---
     style = ttk.Style()
@@ -296,9 +321,15 @@ def iniciar_interface():
     ttk.Entry(frame_banco, textvariable=banco_var, state="readonly", width=68).pack(side="left", padx=(0, 10))
     ttk.Button(frame_banco, text="Procurar...", command=buscar_banco).pack(side="left")
 
-    # Botão de Ação Principal
-    btn_iniciar = tk.Button(root, text="Iniciar Importação", font=("Arial", 12, "bold"), bg="#4CAF50", fg="white", command=executar, height=2)
-    btn_iniciar.pack(fill="x", padx=20, pady=10)
+    # --- BOTÕES DE AÇÃO ---
+    frame_botoes = tk.Frame(root)
+    frame_botoes.pack(fill="x", padx=20, pady=10)
+
+    btn_iniciar = tk.Button(frame_botoes, text="Iniciar Importação", font=("Arial", 11, "bold"), bg="#4CAF50", fg="white", command=executar, height=2, width=30)
+    btn_iniciar.pack(side="left", padx=(0, 10), expand=True, fill="x")
+
+    btn_mva = tk.Button(frame_botoes, text="Atualizar Tabela MVA", font=("Arial", 11, "bold"), bg="#2196F3", fg="white", command=executar_mva, height=2, width=30)
+    btn_mva.pack(side="right", expand=True, fill="x")
 
     # --- ÁREA DO TERMINAL E BARRA DE PROGRESSO ---
     frame_log = ttk.LabelFrame(root, text=" Progresso da Importação ", padding=(10, 10))
