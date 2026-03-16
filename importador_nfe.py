@@ -5,6 +5,7 @@ from datetime import datetime
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import threading
 import sys
 import extrator_mva
 
@@ -52,6 +53,10 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
         for diretorio_atual, subpastas, arquivos in os.walk(pasta_xml):
             for arquivo in arquivos:
                 if not arquivo.lower().endswith('.xml'): continue
+                
+                arquivos_processados += 1
+                if barra_progresso and total_arquivos > 0:
+                    barra_progresso['value'] = (arquivos_processados / total_arquivos) * 100
                 
                 try:
                     caminho = os.path.join(diretorio_atual, arquivo)
@@ -161,7 +166,7 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                         )
                         cursor.execute(sql, valores)
                         
-                        # --- NOVIDADE: LEITURA DOS TOTAIS DA NOTA ---
+                        # --- LEITURA DOS TOTAIS DA NOTA ---
                     bloco_total = infNFe.find('.//nfe:total/nfe:ICMSTot', ns)
                     if bloco_total is not None:
                         tot_vbc = float(p('vBC', bloco_total, ns) or 0)
@@ -193,11 +198,6 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                 except Exception as e_file:
                     print(f"❌ Erro no arquivo {arquivo}: {e_file}")
                 
-                # --- ADICIONE ESTAS 4 LINHAS AQUI ---
-                arquivos_processados += 1
-                if barra_progresso and total_arquivos > 0:
-                    barra_progresso['value'] = (arquivos_processados / total_arquivos) * 100
-                    barra_progresso.update_idletasks()
                     
         cursor.close()
         conn.close()
@@ -250,38 +250,41 @@ def iniciar_interface():
         if banco: banco_var.set(banco)
 
     def executar():
-        # Validação para não rodar vazio
         if not pasta_var.get() or not banco_var.get():
             messagebox.showwarning("Atenção", "Por favor, selecione a pasta e o banco antes de iniciar.")
             return
         
-        # Muda o visual do botão e zera a barra
         btn_iniciar.config(text="Processando...", bg="#757575", state="disabled")
+        btn_mva.config(state="disabled") # Bloqueia o outro botão por segurança
         barra_progresso['value'] = 0
-        terminal.delete(1.0, tk.END) # Limpa o terminal antigo
+        terminal.delete(1.0, tk.END)
         root.update() 
         
-        # Redireciona os prints do Python para a caixinha preta
         stdout_original = sys.stdout
         sys.stdout = RedirecionadorConsole(terminal)
         
-        try:
-            processar(pasta_var.get(), banco_var.get(), barra_progresso)
-            messagebox.showinfo("Sucesso", "Importação concluída com sucesso! Verifique o log no terminal para mais detalhes.")
-        except Exception as e:
-            print(f"🔥 Erro crítico: {e}")
-            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
-        finally:
-            # Restaura o sistema e o botão ao estado normal
-            sys.stdout = stdout_original 
-            btn_iniciar.config(text="Iniciar Importação", bg="#4CAF50", state="normal")
+        # Cria uma função interna para rodar em segundo plano
+        def tarefa_segundo_plano():
+            try:
+                processar(pasta_var.get(), banco_var.get(), barra_progresso)
+                messagebox.showinfo("Sucesso", "Importação concluída com sucesso! Verifique o log.")
+            except Exception as e:
+                print(f"🔥 Erro crítico: {e}")
+                messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+            finally:
+                sys.stdout = stdout_original 
+                btn_iniciar.config(text="Iniciar Importação", bg="#4CAF50", state="normal")
+                btn_mva.config(state="normal")
+
+        # Inicia a thread paralela (daemon=True garante que ela morre se você fechar o app)
+        threading.Thread(target=tarefa_segundo_plano, daemon=True).start()
     
     def executar_mva():
-        # Exige apenas que o banco esteja preenchido
         if not banco_var.get():
-            messagebox.showwarning("Atenção", "Por favor, selecione o Banco de Dados Access antes de atualizar a MVA.")
+            messagebox.showwarning("Atenção", "Selecione o Banco Access antes de atualizar a MVA.")
             return
         
+        btn_iniciar.config(state="disabled")
         btn_mva.config(text="Baixando e Atualizando...", bg="#757575", state="disabled")
         terminal.delete(1.0, tk.END)
         root.update() 
@@ -289,25 +292,44 @@ def iniciar_interface():
         stdout_original = sys.stdout
         sys.stdout = RedirecionadorConsole(terminal)
         
-        try:
-            # Chama a função lá do outro arquivo passando o banco selecionado
-            extrator_mva.automatizar_mva(banco_var.get())
-            messagebox.showinfo("Sucesso", "Tabela de MVA atualizada com sucesso no banco de dados!")
-        except Exception as e:
-            print(f"🔥 Erro crítico: {e}")
-            messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
-        finally:
-            sys.stdout = stdout_original 
-            btn_mva.config(text="Atualizar Tabela MVA", bg="#2196F3", state="normal")
+        def tarefa_mva_segundo_plano():
+            try:
+                extrator_mva.automatizar_mva(banco_var.get())
+                messagebox.showinfo("Sucesso", "Tabela de MVA atualizada com sucesso no banco!")
+            except Exception as e:
+                print(f"🔥 Erro crítico: {e}")
+                messagebox.showerror("Erro", f"Ocorreu um erro: {e}")
+            finally:
+                sys.stdout = stdout_original 
+                btn_iniciar.config(state="normal")
+                btn_mva.config(text="Atualizar Tabela MVA", bg="#2196F3", state="normal")
+
+        threading.Thread(target=tarefa_mva_segundo_plano, daemon=True).start()
+        
 
     # --- LAYOUT DA TELA ---
+    # Define uma cor de fundo moderna (um cinza bem claro, padrão de sistemas web)
+    cor_fundo = "#F5F6F8" 
+    root.configure(bg=cor_fundo)
+
     style = ttk.Style()
-    if 'clam' in style.theme_names():
+    # Tenta usar o tema nativo moderno do Windows ('vista' ou 'xpnative') para tirar a cara de Win98
+    temas = style.theme_names()
+    if 'vista' in temas:
+        style.theme_use('vista')
+    elif 'xpnative' in temas:
+        style.theme_use('xpnative')
+    elif 'clam' in temas:
         style.theme_use('clam')
 
+    # Força todos os textos e molduras a usarem a mesma cor de fundo da janela
+    style.configure("TLabel", background=cor_fundo)
+    style.configure("TLabelframe", background=cor_fundo)
+    style.configure("TLabelframe.Label", background=cor_fundo, font=("Segoe UI", 9, "bold"), foreground="#333333")
+
     # Cabeçalho
-    ttk.Label(root, text="Importador de XML", font=("Arial", 18, "bold")).pack(pady=(15, 5))
-    ttk.Label(root, text="Módulo de Importação de Notas Fiscais (XML para Access)", font=("Arial", 10)).pack(pady=(0, 15))
+    ttk.Label(root, text="Importador de XML", font=("Segoe UI", 18, "bold"), foreground="#1A237E").pack(pady=(15, 5))
+    ttk.Label(root, text="Módulo de Importação de Notas Fiscais", font=("Segoe UI", 10)).pack(pady=(0, 15))
 
     # Área de Seleção 1: Pasta
     frame_pasta = ttk.LabelFrame(root, text=" 1. Pasta de Arquivos XML ", padding=(10, 10))
@@ -322,15 +344,15 @@ def iniciar_interface():
     ttk.Button(frame_banco, text="Procurar...", command=buscar_banco).pack(side="left")
 
     # --- BOTÕES DE AÇÃO ---
-    frame_botoes = tk.Frame(root)
+    # Aplica a mesma cor de fundo no frame que segura os botões
+    frame_botoes = tk.Frame(root, bg=cor_fundo)
     frame_botoes.pack(fill="x", padx=20, pady=10)
 
-    btn_iniciar = tk.Button(frame_botoes, text="Iniciar Importação", font=("Arial", 11, "bold"), bg="#4CAF50", fg="white", command=executar, height=2, width=30)
+    btn_iniciar = tk.Button(frame_botoes, text="Iniciar Importação", font=("Segoe UI", 11, "bold"), bg="#4CAF50", fg="white", relief="flat", command=executar, height=2, width=30)
     btn_iniciar.pack(side="left", padx=(0, 10), expand=True, fill="x")
 
-    btn_mva = tk.Button(frame_botoes, text="Atualizar Tabela MVA", font=("Arial", 11, "bold"), bg="#2196F3", fg="white", command=executar_mva, height=2, width=30)
+    btn_mva = tk.Button(frame_botoes, text="Atualizar Tabela MVA", font=("Segoe UI", 11, "bold"), bg="#2196F3", fg="white", relief="flat", command=executar_mva, height=2, width=30)
     btn_mva.pack(side="right", expand=True, fill="x")
-
     # --- ÁREA DO TERMINAL E BARRA DE PROGRESSO ---
     frame_log = ttk.LabelFrame(root, text=" Progresso da Importação ", padding=(10, 10))
     frame_log.pack(fill="both", expand=True, padx=20, pady=(0, 15))
@@ -349,4 +371,11 @@ def iniciar_interface():
     root.mainloop()
 
 if __name__ == "__main__":
+    # --- FECHA A TELA DE CARREGAMENTO (Splash Screen do PyInstaller) ---
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except ImportError:
+        pass # Ignora o erro ao rodar pelo VS Code
+        
     iniciar_interface()

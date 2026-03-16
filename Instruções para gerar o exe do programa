@@ -8,4 +8,4 @@ Assim que a instalação terminar, execute o "comando mágico" que vai empacotar
 
 Bash
 pyinstaller --noconsole importador_nfe.py
-(Nota: O parâmetro --noconsole serve para que aquela janela preta de linha de comandos não apareça por trás das janelas de seleção do Windows, deixando a ferramenta com um aspeto 100% profissional).
+(Nota: O parâmetro --noconsole serve para qczue aquela janela preta de linha de comandos não apareça por trás das janelas de seleção do Windows, deixando a ferramenta com um aspeto 100% profissional).
