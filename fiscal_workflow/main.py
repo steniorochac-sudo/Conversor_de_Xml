@@ -1,4 +1,5 @@
 from decimal import Decimal
+from datetime import datetime
 import json
 from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, status, WebSocket, WebSocketDisconnect
@@ -264,10 +265,20 @@ async def upload_xml(
             ).first()
             
             if doc_existente:
-                # Se a nota já existe, verifica se o novo XML traz uma situação de cancelamento/atualização
+                # Se a nota já existe, verifica se o novo XML traz uma situação de cancelamento/atualização ou data de emissão faltante
+                dados_atualizados = False
+                if doc_existente.data_emissao is None and dados_nota.get("data_emissao"):
+                    try:
+                        doc_existente.data_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
+                        dados_atualizados = True
+                    except Exception:
+                        pass
                 nova_cstat = dados_nota.get("cstat", "100")
                 if doc_existente.cstat != nova_cstat:
                     doc_existente.cstat = nova_cstat
+                    dados_atualizados = True
+                
+                if dados_atualizados:
                     db.commit()
                     db.refresh(doc_existente)
                 documentos_salvos.append(doc_existente)
