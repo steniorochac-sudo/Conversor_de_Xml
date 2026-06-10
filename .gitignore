@@ -3,6 +3,7 @@
 # ==========================================
 venv/
 env/
+.venv/
 .env
 
 # ==========================================
@@ -18,6 +19,7 @@ build/
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # ==========================================
 # IGNORAR DADOS DA EMPRESA E DOWNLOADS
@@ -29,6 +31,8 @@ __pycache__/
 *.xml
 *.csv
 decreto_icms_ba.pdf
+*.pdf
+*.db
 
 # ==========================================
 # IGNORAR CONFIGURAÇÕES DO VS CODE

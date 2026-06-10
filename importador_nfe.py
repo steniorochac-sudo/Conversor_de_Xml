@@ -58,126 +58,123 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                 if barra_progresso and total_arquivos > 0:
                     barra_progresso['value'] = (arquivos_processados / total_arquivos) * 100
                 
-                try:
                     caminho = os.path.join(diretorio_atual, arquivo)
+                    with open(caminho, 'rb') as f:
+                        xml_content = f.read()
+                    
+                    try:
+                        from fiscal_workflow.services.parsers import parse_documento_fiscal
+                        lista_notas = parse_documento_fiscal(xml_content)
+                    except Exception as e_parse:
+                        print(f"❌ Erro ao ler/parsear {arquivo}: {e_parse}")
+                        continue
+
+                    # Voltar ao XML estruturado para NFe para compatibilidade
                     tree = ET.parse(caminho)
                     root = tree.getroot()
                     ns = {'nfe': 'http://www.portalfiscal.inf.br/nfe'}
-                    
-                    infNFe = root.find('.//nfe:infNFe', ns)
-                    if infNFe is None: continue
-                    
-                    chave = infNFe.attrib['Id'][3:]
-                    
-                    # ---  O FILTRO ---
-                    # 2. Se a nota já está no banco, pula para o próximo arquivo!
-                    if chave in notas_existentes:
-                        continue 
-                    # --------------------------
-                    ide = infNFe.find('nfe:ide', ns)
-                    emit = infNFe.find('nfe:emit', ns)
-                    dest = infNFe.find('nfe:dest', ns)
-                    
-                    # Dados da Capa
-                    n_nf = p('nNF', ide, ns)
-                    d_emi = p('dhEmi', ide, ns) or p('dEmi', ide, ns)
-                    d_emi_dt = datetime.fromisoformat(d_emi[:10]) if d_emi else None
-                
-                    # O período é o nome da pasta onde o XML está localizado, assumindo que a estrutura seja algo como "...\2026\02-2026\arquivo.xml"
-                    # Exemplo: se o diretorio_atual for "...\2026\02-2026", o período será "02-2026"
-                    periodo = os.path.basename(diretorio_atual)
 
-                    # Loop nos itens (Produtos)
-                    for det in infNFe.findall('nfe:det', ns):
-                        prod = det.find('nfe:prod', ns)
-                        imposto = det.find('nfe:imposto', ns)
-                        icms = imposto.find('.//nfe:ICMS', ns) if imposto is not None else None
+                    for dados_nota in lista_notas:
+                        chave = dados_nota["chave_acesso"]
                         
-                        # 1. Lemos os valores de ICMS Normal
-                        icms_vbc = float(p('vBC', icms, ns) or 0)
-                        icms_picms = float(p('pICMS', icms, ns) or 0)
-                        icms_vicms = float(p('vICMS', icms, ns) or 0)
+                        # ---  O FILTRO ---
+                        # 2. Se a nota já está no banco, pula!
+                        if chave in notas_existentes:
+                            continue 
+                        # --------------------------
                         
-                        # 2. Lemos os valores de Crédito do Simples Nacional
-                        icms_pcredsn = float(p('pCredSN', icms, ns) or 0)
-                        icms_vcredicmssn = float(p('vCredICMSSN', icms, ns) or 0)
-                        
-                        # 3. Extração das tags de ST e FCP Retido
-                        icms_vbcfcpstret = float(p('vBCFCPSTRet', icms, ns) or 0)
-                        icms_pfcpstret = float(p('pFCPSTRet', icms, ns) or 0)
-                        icms_pmvast = float(p('pMVAST', icms, ns) or 0)
-                        icms_vbcst = float(p('vBCST', icms, ns) or 0)
-                        icms_picmsst = float(p('pICMSST', icms, ns) or 0)
-                        icms_vicmsst = float(p('vICMSST', icms, ns) or 0)
-                        
-                        # 4. Extração das tags de PIS
-                        pis_cst = p('CST', imposto.find('.//nfe:PIS', ns), ns)
-                        pis_vbc = float(p('vBC', imposto.find('.//nfe:PIS', ns), ns) or 0)
-                        pis_ppis = float(p('pPIS', imposto.find('.//nfe:PIS', ns), ns) or 0)
-                        pis_vpis = float(p('vPIS', imposto.find('.//nfe:PIS', ns), ns) or 0)
-                        
-                        # 5. Extração das tags de COFINS
-                        cofins_cst = p('CST', imposto.find('.//nfe:COFINS', ns), ns)
-                        cofins_vbc = float(p('vBC', imposto.find('.//nfe:COFINS', ns), ns) or 0)
-                        cofins_pcofins = float(p('pCOFINS', imposto.find('.//nfe:COFINS', ns), ns) or 0)
-                        cofins_vcofins = float(p('vCOFINS', imposto.find('.//nfe:COFINS', ns), ns) or 0)
-                        
-                        # ---> PASSO 1 (No Python): Extrair a nova informação do XML.
-                        # Crie uma variável nova. Use 'p()' para buscar a tag.
-                        # Se for texto, use: nova_variavel = p('NomeDaTag', det, ns)
-                        # Se for número, use: nova_variavel = float(p('NomeDaTag', det, ns) or 0)
-                        
-                        # Adicionamos as novas colunas no SQL (agora com 34 pontos de interrogação)
-                        sql = """INSERT INTO tblNotasDetalhado (
-                            Chave_NFe, Periodo, Numero_NF, Data_Emissao, 
-                            Emitente_CNPJ, Emitente_Nome, Emitente_UF, Emitente_IE, Emitente_CRT,
-                            Destinatario_CNPJ, Destinatario_Nome, Destinatario_UF,
-                            Produto_cProd, Produto_xProd, Produto_cEAN, CEST, Produto_NCM, Produto_CFOP, Unidade,
-                            Produto_qCom, Produto_vUnCom, Produto_vProd, vIPI, Produto_vDesc, Produto_vFrete,
-                            vBCFCPSTRet, pFCPSTRet, ICMS_CST, ICMS_Item_vBC, ICMS_Item_pICMS, 
-                            ICMS_Item_vCredICMSSN, ICMS_Item_vICMS, ICMS_Item_pCredSN, 
-                            ICMS_pMVAST, vBC_ST, pICMSST, vICMSST,
-                            PIS_CST, PIS_vBC, PIS_pPIS, vPIS, 
-                            COFINS_CST, COFINS_vBC, COFINS_pCOFINS, vCOFINS, 
-                            cStat
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
-                        # ---> PASSO 2: Digite o NOME EXATO da nova coluna do Access aqui, antes do 'cStat'
-                        
-                        # ---> PASSO 3: Para cada coluna nova que você adicionou no Passo 2,
-                        # adicione um novo ponto de interrogação '?' no final do bloco VALUES acima.
-                        
-                        valores = (
-                            chave, periodo, n_nf, d_emi_dt,
-                            p('CNPJ', emit, ns), p('xNome', emit, ns), p('UF', emit, ns), p('IE', emit, ns), p('CRT', emit, ns),
-                            p('CNPJ', dest, ns) or p('CPF', dest, ns), p('xNome', dest, ns), p('UF', dest, ns),
-                            p('cProd', prod, ns), p('xProd', prod, ns), p('cEAN', prod, ns), p('CEST', prod, ns),
-                            p('NCM', prod, ns), p('CFOP', prod, ns), p('uCom', prod, ns),
-                            float(p('qCom', prod, ns) or 0), float(p('vUnCom', prod, ns) or 0), float(p('vProd', prod, ns) or 0),
-                            float(p('vIPI', imposto, ns) or 0), float(p('vDesc', prod, ns) or 0), float(p('vFrete', prod, ns) or 0),
-                            icms_vbcfcpstret, icms_pfcpstret, p('CST', icms, ns) or p('CSOSN', icms, ns), icms_vbc, icms_picms, 
-                            icms_vcredicmssn, icms_vicms, icms_pcredsn, 
-                            icms_pmvast, icms_vbcst, icms_picmsst, icms_vicmsst,
-                            pis_cst, pis_vbc, pis_ppis, pis_vpis, 
-                            cofins_cst, cofins_vbc, cofins_pcofins, cofins_vcofins, 
-                            "100"
+                        # Dados da Capa
+                        n_nf = dados_nota["numero_nf"]
+                        d_emi = dados_nota["data_emissao"]
+                        d_emi_dt = datetime.fromisoformat(d_emi[:10]) if d_emi else None
+                    
+                        # O período é o nome da pasta onde o XML está localizado
+                        periodo = os.path.basename(diretorio_atual)
+
+                        # Loop nos itens
+                        for item in dados_nota["itens"]:
+                            icms = item["impostos"].get("icms", {})
+                            pis = item["impostos"].get("pis", {})
+                            cofins = item["impostos"].get("cofins", {})
                             
-                            # ---> PASSO 4: Coloque sua 'nova_variavel' aqui, NA MESMA ORDEM 
-                            # em que você digitou o nome da coluna lá no Passo 2!
-                        )
-                        cursor.execute(sql, valores)
-                        
+                            icms_vbc = float(icms.get("valor_base_calculo", 0.0) or 0)
+                            icms_picms = float(icms.get("aliquota", 0.0) or 0)
+                            icms_vicms = float(icms.get("valor", 0.0) or 0)
+                            icms_pcredsn = float(icms.get("aliquota_credito_sn", 0.0) or 0)
+                            icms_vcredicmssn = float(icms.get("valor_credito_sn", 0.0) or 0)
+                            
+                            # Para NFS-e/NFe
+                            icms_vbcfcpstret = float(icms.get("valor_base_calculo_fcp_st_ret", 0.0) or 0)
+                            icms_pfcpstret = float(icms.get("aliquota_fcp_st_ret", 0.0) or 0)
+                            icms_pmvast = float(icms.get("aliquota_mva_st", 0.0) or 0)
+                            icms_vbcst = float(icms.get("valor_base_calculo_st", 0.0) or 0)
+                            icms_picmsst = float(icms.get("aliquota_st", 0.0) or 0)
+                            icms_vicmsst = float(icms.get("valor_st", 0.0) or 0)
+                            
+                            pis_cst = pis.get("cst", "")
+                            pis_vbc = float(pis.get("valor_base_calculo", 0.0) or 0)
+                            pis_ppis = float(pis.get("aliquota", 0.0) or 0)
+                            pis_vpis = float(pis.get("valor", 0.0) or 0)
+                            
+                            cofins_cst = cofins.get("cst", "")
+                            cofins_vbc = float(cofins.get("valor_base_calculo", 0.0) or 0)
+                            cofins_pcofins = float(cofins.get("aliquota", 0.0) or 0)
+                            cofins_vcofins = float(cofins.get("valor", 0.0) or 0)
+
+                            sql = """INSERT INTO tblNotasDetalhado (
+                                Chave_NFe, Periodo, Numero_NF, Data_Emissao, 
+                                Emitente_CNPJ, Emitente_Nome, Emitente_UF, Emitente_IE, Emitente_CRT,
+                                Destinatario_CNPJ, Destinatario_Nome, Destinatario_UF,
+                                Produto_cProd, Produto_xProd, Produto_cEAN, CEST, Produto_NCM, Produto_CFOP, Unidade,
+                                Produto_qCom, Produto_vUnCom, Produto_vProd, vIPI, Produto_vDesc, Produto_vFrete,
+                                vBCFCPSTRet, pFCPSTRet, ICMS_CST, ICMS_Item_vBC, ICMS_Item_pICMS, 
+                                ICMS_Item_vCredICMSSN, ICMS_Item_vICMS, ICMS_Item_pCredSN, 
+                                ICMS_pMVAST, vBC_ST, pICMSST, vICMSST,
+                                PIS_CST, PIS_vBC, PIS_pPIS, vPIS, 
+                                COFINS_CST, COFINS_vBC, COFINS_pCOFINS, vCOFINS, 
+                                cStat
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+                            
+                            valores = (
+                                chave, periodo, n_nf, d_emi_dt,
+                                dados_nota["emitente_cnpj"], dados_nota["emitente_razao_social"], "", "", dados_nota["emitente_crt"],
+                                dados_nota.get("destinatario_cnpj", ""), dados_nota.get("destinatario_name", dados_nota.get("destinatario_nome", "")), dados_nota.get("destinatario_uf", ""),
+                                item["codigo_produto"], item["descricao"], "", "", item["ncm"], item["cfop"], "UN",
+                                float(item["quantidade"] or 0), float(item["valor_unitario"] or 0), float(item["valor_total"] or 0),
+                                0.0, float(item["desconto"] or 0), float(item["frete"] or 0),
+                                icms_vbcfcpstret, icms_pfcpstret, icms.get("cst", ""), icms_vbc, icms_picms, 
+                                icms_vcredicmssn, icms_vicms, icms_pcredsn, 
+                                icms_pmvast, icms_vbcst, icms_picmsst, icms_vicmsst,
+                                pis_cst, pis_vbc, pis_ppis, pis_vpis, 
+                                cofins_cst, cofins_vbc, cofins_pcofins, cofins_vcofins, 
+                                dados_nota["cstat"]
+                            )
+                            cursor.execute(sql, valores)
+                            
                         # --- LEITURA DOS TOTAIS DA NOTA ---
-                    bloco_total = infNFe.find('.//nfe:total/nfe:ICMSTot', ns)
-                    if bloco_total is not None:
-                        tot_vbc = float(p('vBC', bloco_total, ns) or 0)
-                        tot_vicms = float(p('vICMS', bloco_total, ns) or 0)
-                        tot_vbcst = float(p('vBCST', bloco_total, ns) or 0)
-                        tot_vst = float(p('vST', bloco_total, ns) or 0)
-                        tot_vfcp = float(p('vFCP', bloco_total, ns) or 0)
-                        tot_vpis = float(p('vPIS', bloco_total, ns) or 0)
-                        tot_vcofins = float(p('vCOFINS', bloco_total, ns) or 0)
-                        tot_vnf = float(p('vNF', bloco_total, ns) or 0)
+                        tot_vbc = 0.0
+                        tot_vicms = 0.0
+                        tot_vbcst = 0.0
+                        tot_vst = 0.0
+                        tot_vfcp = 0.0
+                        tot_vpis = 0.0
+                        tot_vcofins = 0.0
+                        tot_vnf = float(dados_nota["valor_total"] or 0)
                         
+                        if dados_nota["tipo_documento"] != "NFS-e":
+                            bloco_total = root.find('.//nfe:total/nfe:ICMSTot', ns)
+                            if bloco_total is not None:
+                                tot_vbc = float(p('vBC', bloco_total, ns) or 0)
+                                tot_vicms = float(p('vICMS', bloco_total, ns) or 0)
+                                tot_vbcst = float(p('vBCST', bloco_total, ns) or 0)
+                                tot_vst = float(p('vST', bloco_total, ns) or 0)
+                                tot_vfcp = float(p('vFCP', bloco_total, ns) or 0)
+                                tot_vpis = float(p('vPIS', bloco_total, ns) or 0)
+                                tot_vcofins = float(p('vCOFINS', bloco_total, ns) or 0)
+                        else:
+                            first_item = dados_nota["itens"][0]
+                            tot_vbc = float(first_item["impostos"].get("iss", {}).get("valor_base_calculo", 0.0) or 0)
+                            
                         sql_totais = """INSERT INTO tblNotasTotais (
                             Chave_NFe, Periodo, Numero_NF, Data_Emissao, 
                             Emitente_CNPJ, Emitente_Nome, 
@@ -186,14 +183,13 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                         
                         valores_totais = (
                             chave, periodo, n_nf, d_emi_dt,
-                            p('CNPJ', emit, ns), p('xNome', emit, ns),
+                            dados_nota["emitente_cnpj"], dados_nota["emitente_razao_social"],
                             tot_vbc, tot_vicms, tot_vbcst, tot_vst, tot_vfcp, tot_vpis, tot_vcofins, tot_vnf
                         )
                         cursor.execute(sql_totais, valores_totais)
-                    # ---------------------------------------------
-                    
-                    print(f"✅ Nota {n_nf} importada.")
-                    conn.commit()
+                        
+                        print(f"✅ Nota {n_nf} ({dados_nota['tipo_documento']}) importada.")
+                        conn.commit()
                     
                 except Exception as e_file:
                     print(f"❌ Erro no arquivo {arquivo}: {e_file}")
