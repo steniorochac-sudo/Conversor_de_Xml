@@ -33,6 +33,98 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
             }
         }
+        // Controle de logs do sistema
+        let logsInterval = null;
+
+        function abrirModalLogs() {
+            document.getElementById('modal-logs').classList.remove('hidden');
+            carregarLogs();
+            logsInterval = setInterval(carregarLogs, 3000);
+        }
+
+        function fecharModalLogs() {
+            document.getElementById('modal-logs').classList.add('hidden');
+            if (logsInterval) {
+                clearInterval(logsInterval);
+                logsInterval = null;
+            }
+        }
+
+        async function carregarLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const data = await response.json();
+                const terminal = document.getElementById('terminal-logs');
+                if (data.logs && data.logs.length > 0) {
+                    const formatted = data.logs.map(line => {
+                        let colorClass = 'text-slate-300';
+                        if (line.includes(' - ERROR - ') || line.includes(' 404 ') || line.includes(' 500 ') || line.includes('[ERRO]')) {
+                            colorClass = 'text-rose-400 font-semibold';
+                        } else if (line.includes(' - WARNING - ') || line.includes('[ALERTA]') || line.includes(' 307 ')) {
+                            colorClass = 'text-amber-400';
+                        } else if (line.includes(' - INFO - ') && (line.includes(' 200 OK') || line.includes(' 201 Created') || line.includes('[SUCESSO]'))) {
+                            colorClass = 'text-emerald-400';
+                        } else if (line.includes('Uvicorn running on') || line.includes('Application startup complete')) {
+                            colorClass = 'text-indigo-400 font-bold';
+                        } else if (line.includes(' - INFO - ')) {
+                            colorClass = 'text-slate-400';
+                        }
+                        return `<div class="${colorClass}">${escaparHtml(line)}</div>`;
+                    }).join('');
+                    
+                    const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
+                    terminal.innerHTML = formatted;
+                    if (isScrolledToBottom) {
+                        terminal.scrollTop = terminal.scrollHeight;
+                    }
+                } else {
+                    terminal.innerHTML = '<div class="text-slate-500">// Nenhum log disponível.</div>';
+                }
+            } catch (err) {
+                console.error("Erro ao buscar logs:", err);
+            }
+        }
+
+        function escaparHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        function copiarLogs() {
+            const terminal = document.getElementById('terminal-logs');
+            const range = document.createRange();
+            range.selectNode(terminal);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            try {
+                document.execCommand('copy');
+                mostrarToast("Logs copiados para a área de transferência!");
+            } catch (err) {
+                mostrarToast("Erro ao copiar logs.", "error");
+            }
+            window.getSelection().removeAllRanges();
+        }
+
+        async function limparLogsArquivo() {
+            if (!confirm("Tem certeza que deseja limpar todo o histórico de logs do servidor?")) return;
+            try {
+                const response = await fetch('/api/logs/clear', { method: 'POST' });
+                if (response.ok) {
+                    mostrarToast("Histórico de logs limpo com sucesso!");
+                    carregarLogs();
+                } else {
+                    mostrarToast("Falha ao limpar logs.", "error");
+                }
+            } catch (err) {
+                mostrarToast("Erro ao limpar logs.", "error");
+            }
+        }
     </script>
     <style>
         body {
@@ -67,6 +159,10 @@ HTML_CONTENT = """<!DOCTYPE html>
                 </div>
             </div>
             <div class="flex items-center space-x-4">
+                <button onclick="abrirModalLogs()" class="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 border border-slate-700 hover:bg-slate-700 text-slate-200 transition-colors">
+                    <i class="fa-solid fa-terminal mr-2 text-indigo-400"></i>
+                    Logs do Servidor
+                </button>
                 <span id="db-status-badge" class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                     <span class="w-2 h-2 mr-2 rounded-full bg-emerald-400 animate-pulse"></span>
                     Conectado (Neon / SQLite)
@@ -1651,7 +1747,161 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
         function formatarMoeda(val) {
             return Number(val).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
         }
+
+        // WebSocket Heartbeat para autodesligamento do servidor
+        (function() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/heartbeat`;
+            let ws;
+
+            function connectHeartbeat() {
+                ws = new WebSocket(wsUrl);
+                ws.onclose = function() {
+                    // Tenta reconectar a cada 3 segundos se cair acidentalmente
+                    setTimeout(connectHeartbeat, 3000);
+                };
+                ws.onerror = function() {
+                    ws.close();
+                };
+            }
+            connectHeartbeat();
+        })();
+        // Controle de logs do sistema
+        let logsInterval = null;
+
+        function abrirModalLogs() {
+            document.getElementById('modal-logs').classList.remove('hidden');
+            carregarLogs();
+            logsInterval = setInterval(carregarLogs, 3000);
+        }
+
+        function fecharModalLogs() {
+            document.getElementById('modal-logs').classList.add('hidden');
+            if (logsInterval) {
+                clearInterval(logsInterval);
+                logsInterval = null;
+            }
+        }
+
+        async function carregarLogs() {
+            try {
+                const response = await fetch('/api/logs');
+                const data = await response.json();
+                const terminal = document.getElementById('terminal-logs');
+                if (data.logs && data.logs.length > 0) {
+                    const formatted = data.logs.map(line => {
+                        let colorClass = 'text-slate-300';
+                        if (line.includes(' - ERROR - ') || line.includes(' 404 ') || line.includes(' 500 ') || line.includes('[ERRO]')) {
+                            colorClass = 'text-rose-400 font-semibold';
+                        } else if (line.includes(' - WARNING - ') || line.includes('[ALERTA]') || line.includes(' 307 ')) {
+                            colorClass = 'text-amber-400';
+                        } else if (line.includes(' - INFO - ') && (line.includes(' 200 OK') || line.includes(' 201 Created') || line.includes('[SUCESSO]'))) {
+                            colorClass = 'text-emerald-400';
+                        } else if (line.includes('Uvicorn running on') || line.includes('Application startup complete')) {
+                            colorClass = 'text-indigo-400 font-bold';
+                        } else if (line.includes(' - INFO - ')) {
+                            colorClass = 'text-slate-400';
+                        }
+                        return `<div class="${colorClass}">${escaparHtml(line)}</div>`;
+                    }).join('');
+                    
+                    const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
+                    terminal.innerHTML = formatted;
+                    if (isScrolledToBottom) {
+                        terminal.scrollTop = terminal.scrollHeight;
+                    }
+                } else {
+                    terminal.innerHTML = '<div class="text-slate-500">// Nenhum log disponível.</div>';
+                }
+            } catch (err) {
+                console.error("Erro ao buscar logs:", err);
+            }
+        }
+
+        function escaparHtml(text) {
+            const map = {
+                '&': '&amp;',
+                '<': '&lt;',
+                '>': '&gt;',
+                '"': '&quot;',
+                "'": '&#039;'
+            };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        function copiarLogs() {
+            const terminal = document.getElementById('terminal-logs');
+            const range = document.createRange();
+            range.selectNode(terminal);
+            window.getSelection().removeAllRanges();
+            window.getSelection().addRange(range);
+            try {
+                document.execCommand('copy');
+                mostrarToast("Logs copiados para a área de transferência!");
+            } catch (err) {
+                mostrarToast("Erro ao copiar logs.", "error");
+            }
+            window.getSelection().removeAllRanges();
+        }
+
+        async function limparLogsArquivo() {
+            if (!confirm("Tem certeza que deseja limpar todo o histórico de logs do servidor?")) return;
+            try {
+                const response = await fetch('/api/logs/clear', { method: 'POST' });
+                if (response.ok) {
+                    mostrarToast("Histórico de logs limpo com sucesso!");
+                    carregarLogs();
+                } else {
+                    mostrarToast("Falha ao limpar logs.", "error");
+                }
+            } catch (err) {
+                mostrarToast("Erro ao limpar logs.", "error");
+            }
+        }
     </script>
+    <!-- MODAL DE LOGS DO SISTEMA -->
+    <div id="modal-logs" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/40 backdrop-blur-sm hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+            <!-- Header do Modal -->
+            <div class="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="bg-indigo-500/10 text-indigo-400 p-2 rounded-lg border border-indigo-500/20">
+                        <i class="fa-solid fa-terminal text-sm"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-slate-100">Logs em Tempo Real do Servidor</h3>
+                        <p class="text-[10px] text-slate-500">Últimos eventos do motor de apuração e conexões da API</p>
+                    </div>
+                </div>
+                <button onclick="fecharModalLogs()" class="p-1 text-slate-400 hover:text-slate-200 transition-colors">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+            <!-- Corpo / Terminal do Modal -->
+            <div id="terminal-logs" class="flex-1 p-6 overflow-y-auto font-mono text-xs text-slate-300 space-y-1.5 selection:bg-indigo-500 selection:text-white bg-slate-950">
+                <div class="text-slate-500 text-[11px] mb-2">// Conectando ao fluxo de logs do servidor...</div>
+            </div>
+            <!-- Footer do Modal -->
+            <div class="px-6 py-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-[11px] text-slate-500">
+                <div class="flex items-center space-x-2">
+                    <span class="relative flex h-2 w-2">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                    </span>
+                    <span>Atualizando a cada 3 segundos</span>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <button onclick="copiarLogs()" class="text-slate-400 hover:text-slate-200 flex items-center transition-colors">
+                        <i class="fa-solid fa-copy mr-1.5"></i> Copiar Tudo
+                    </button>
+                    <button onclick="limparLogsArquivo()" class="text-rose-400 hover:text-rose-300 flex items-center transition-colors">
+                        <i class="fa-solid fa-trash mr-1.5"></i> Limpar Histórico
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
 """

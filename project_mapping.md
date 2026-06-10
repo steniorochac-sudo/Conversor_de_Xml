@@ -16,8 +16,8 @@ A aplicação é um **ecossistema de processamento e apuração de documentos fi
 2. **Subsistema Web API (Staging Area & Motor Fiscal)**:
    - Desenvolvido em **FastAPI** (Python) com suporte a banco de dados **SQLite** local ou **PostgreSQL** (local ou em nuvem via Neon) configurado por variáveis de ambiente.
    - Fornece uma **Staging Area** (Área de Preparação) onde notas fiscais são importadas e podem ser editadas, auditadas e ter ajustes manuais registrados de forma rastreável.
-   - Roda um **Motor de Cálculo Dinâmico (Strategy Pattern)** para simulação e apuração de tributos sob diferentes regimes (Simples Nacional - Anexos I, III e V com Fator R; e Lucro Presumido - Prestação de Serviços).
-   - Apresenta um **Painel de Controle Visual (Dashboard)** interativo e moderno incorporado diretamente no backend.
+   - Roda um Motor de Cálculo Dinâmico (Strategy Pattern) para simulação e apuração de tributos sob diferentes regimes (Simples Nacional - Anexos I, II [Indústria], III, IV e V [Fator R]; e Lucro Presumido - Prestação de Serviços).
+   - Apresenta um **Painel de Controle Visual (Dashboard)** interativo e moderno incorporado diretamente no backend, contendo um visualizador de terminal de logs em tempo real integrado.
 
 ---
 
@@ -32,6 +32,7 @@ Conversor_de_Xml_Nfe/
 ├── .gitignore                       # Filtros de arquivos para controle de versão
 ├── Atualizar_Notas.bat              # Script batch para automação de tarefas de importação
 ├── Iniciar_Workflow_Fiscal.bat      # Script batch para iniciar a API FastAPI e abrir o Dashboard
+├── Iniciar_Workflow_Fiscal_Silencioso.vbs # VBScript para inicializar o servidor de forma oculta/silenciosa
 ├── Instruções para gerar o exe...   # Guia técnico para compilar o script Desktop em .exe usando PyInstaller
 ├── LEIAME                           # Manual rápido de receitas para inclusão de novos campos no Access/Python
 ├── extrator_mva.py                  # Script de raspagem (scraping) de PDFs de MVA da SEFAZ-BA
@@ -185,8 +186,9 @@ graph TD
 3. **Motor de Cálculo (Strategy Pattern)**: Quando `/documentos/{id}/apurar` é chamado:
    - A `CalculadoraFactory` identifica o Regime Tributário da empresa associada.
    - Se **Simples Nacional**:
-     - Calcula a **alíquota efetiva** dinâmica a partir do Faturamento Acumulado (RBT12), da Folha de Salários e da regra do **Fator R** (Anexo III vs Anexo V).
-     - Analisa os itens JSON do documento. Se houver produtos com Substituição Tributária de ICMS (CSTs de ST/CSOSN 500), calcula a **Segregação de ST** com base na fração de partilha tributária do ICMS (Anexo I - Comércio) para deduzir o imposto e gerar economia fiscal real.
+     - Calcula a **alíquota efetiva** dinâmica a partir do Faturamento Acumulado (RBT12), da Folha de Salários e da regra do **Fator R** (Anexo III vs Anexo V) ou enquadramento explícito (Anexo I, II, III, IV ou V).
+     - **Anexo I (Comércio) & Anexo II (Indústria)**: Analisa os itens JSON do documento. Se houver produtos com Substituição Tributária de ICMS (CSTs de ST/CSOSN 500), calcula a **Segregação de ST** com base na fração de partilha tributária do ICMS (Anexo I ou Anexo II) para deduzir o imposto e gerar economia fiscal real. O Anexo II também calcula e destaca a partilha fixa do **IPI (7,50%)**.
+     - **Anexo IV & Anexo V**: Calcula a dedução de ISS Retido na fonte usando as frações de partilha específicas (Anexo IV: 44,5% a 40%; Anexo V: 14% a 23,33%). Para o Anexo IV, a **CPP (INSS Patronal)** de 20% sobre a folha é excluída do DAS, emitindo um lembrete previdenciário no Dashboard.
    - Se **Lucro Presumido**:
      - Executa a presunção federal clássica para serviços (Presunção de 32% base de cálculo): **PIS (0,65%)**, **COFINS (3,00%)**, **IRPJ (4,80%)** e **CSLL (2,88%)**.
    - Se a nota fiscal possuir `cstat` de **Cancelamento ou Denegação** (`101`, `110`, `301`, `302`), o faturamento e os impostos são zerados automaticamente, emitindo uma mensagem de alerta.
@@ -213,7 +215,10 @@ pip install fastapi uvicorn sqlalchemy pydantic pdfplumber pandas requests pyodb
 ### Passo 2: Executar a API Web e Dashboard
 Para iniciar o servidor web local e acessar o Dashboard interativo, execute o arquivo batch fornecido ou execute diretamente pelo terminal:
 ```powershell
-# Executando via batch script
+# Executando silenciosamente em segundo plano (Recomendado)
+Iniciar_Workflow_Fiscal_Silencioso.vbs
+
+# Executando via batch script (com janela do console aberta)
 .\Iniciar_Workflow_Fiscal.bat
 
 # OU rodando manualmente via terminal

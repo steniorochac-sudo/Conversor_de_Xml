@@ -38,3 +38,4 @@ decreto_icms_ba.pdf
 # IGNORAR CONFIGURAÇÕES DO VS CODE
 # ==========================================
 .vscode/
+*.log

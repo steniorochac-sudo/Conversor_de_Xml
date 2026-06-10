@@ -1,9 +1,32 @@
 from decimal import Decimal
 import json
 from typing import List, Optional
-from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, status
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
+import asyncio
+import logging
+from logging.handlers import RotatingFileHandler
+import os
+
+# Configura o Logger para gravar no arquivo na raiz do projeto
+log_file = "fiscal_workflow.log"
+
+
+file_handler = RotatingFileHandler(log_file, maxBytes=1024 * 1024 * 5, backupCount=3, encoding="utf-8")
+file_handler.setLevel(logging.INFO)
+formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
+file_handler.setFormatter(formatter)
+
+# Configura logger padrão da aplicação
+app_logger = logging.getLogger("fiscal_workflow")
+app_logger.setLevel(logging.INFO)
+app_logger.addHandler(file_handler)
+
+# Adiciona o handler nos loggers do uvicorn para capturar acessos e inicialização
+for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+    l = logging.getLogger(logger_name)
+    l.addHandler(file_handler)
 
 # Importa a conexão com o banco de dados
 from fiscal_workflow.db.database import engine, get_db
@@ -62,16 +85,87 @@ with engine.connect() as conn:
     except Exception:
         pass
 
+class HeartbeatManager:
+    def __init__(self):
+        self.active_connections = 0
+        self.shutdown_task = None
+        self.has_connected_once = False
+        
+    def connect(self):
+        self.active_connections += 1
+        self.has_connected_once = True
+        if self.shutdown_task:
+            self.shutdown_task.cancel()
+            self.shutdown_task = None
+            
+    def disconnect(self):
+        self.active_connections -= 1
+        if self.has_connected_once and self.active_connections <= 0:
+            self.shutdown_task = asyncio.create_task(self.delayed_shutdown(8))
+            
+    async def delayed_shutdown(self, delay: int):
+        try:
+            await asyncio.sleep(delay)
+            app_logger.info("Nenhuma conexão ativa detectada. Desligando o servidor uvicorn...")
+            import os
+            import signal
+            os.kill(os.getpid(), signal.SIGINT)
+        except asyncio.CancelledError:
+            pass
+
+heartbeat_manager = HeartbeatManager()
+
 app = FastAPI(
     title="Workflow Modular Fiscal",
     description="API de ingestão de XMLs, Staging Area e motor de apuração fiscal",
     version="1.0.0"
 )
 
+@app.websocket("/ws/heartbeat")
+async def websocket_heartbeat(websocket: WebSocket):
+    await websocket.accept()
+    heartbeat_manager.connect()
+    try:
+        while True:
+            # Mantém a conexão aberta esperando mensagens (ou desconexão)
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        heartbeat_manager.disconnect()
+
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     """Retorna o painel visual (Dashboard) de staging e apuração fiscal."""
     return HTMLResponse(content=HTML_CONTENT)
+
+@app.get("/api/logs")
+def get_system_logs():
+    """Retorna as últimas 200 linhas do arquivo de log do sistema."""
+    log_path = "fiscal_workflow.log"
+    if not os.path.exists(log_path):
+        return {"logs": ["Nenhum log gerado ainda no servidor."]}
+    
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+            last_lines = lines[-200:]
+            return {"logs": [line.strip() for line in last_lines]}
+    except Exception as e:
+        return {"logs": [f"Erro ao ler arquivo de logs: {str(e)}"]}
+
+@app.post("/api/logs/clear")
+def clear_system_logs():
+    """Limpa o conteúdo do arquivo de log."""
+    log_path = "fiscal_workflow.log"
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write("")
+        app_logger.info("Histórico de logs limpo pelo usuário.")
+        return {"status": "success", "message": "Logs limpos com sucesso."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao limpar logs: {str(e)}")
+
 
 # ==========================================
 # ENDPOINTS DE CADASTRO DE EMPRESA
