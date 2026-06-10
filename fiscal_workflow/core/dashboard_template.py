@@ -33,98 +33,6 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
             }
         }
-        // Controle de logs do sistema
-        let logsInterval = null;
-
-        function abrirModalLogs() {
-            document.getElementById('modal-logs').classList.remove('hidden');
-            carregarLogs();
-            logsInterval = setInterval(carregarLogs, 3000);
-        }
-
-        function fecharModalLogs() {
-            document.getElementById('modal-logs').classList.add('hidden');
-            if (logsInterval) {
-                clearInterval(logsInterval);
-                logsInterval = null;
-            }
-        }
-
-        async function carregarLogs() {
-            try {
-                const response = await fetch('/api/logs');
-                const data = await response.json();
-                const terminal = document.getElementById('terminal-logs');
-                if (data.logs && data.logs.length > 0) {
-                    const formatted = data.logs.map(line => {
-                        let colorClass = 'text-slate-300';
-                        if (line.includes(' - ERROR - ') || line.includes(' 404 ') || line.includes(' 500 ') || line.includes('[ERRO]')) {
-                            colorClass = 'text-rose-400 font-semibold';
-                        } else if (line.includes(' - WARNING - ') || line.includes('[ALERTA]') || line.includes(' 307 ')) {
-                            colorClass = 'text-amber-400';
-                        } else if (line.includes(' - INFO - ') && (line.includes(' 200 OK') || line.includes(' 201 Created') || line.includes('[SUCESSO]'))) {
-                            colorClass = 'text-emerald-400';
-                        } else if (line.includes('Uvicorn running on') || line.includes('Application startup complete')) {
-                            colorClass = 'text-indigo-400 font-bold';
-                        } else if (line.includes(' - INFO - ')) {
-                            colorClass = 'text-slate-400';
-                        }
-                        return `<div class="${colorClass}">${escaparHtml(line)}</div>`;
-                    }).join('');
-                    
-                    const isScrolledToBottom = terminal.scrollHeight - terminal.clientHeight <= terminal.scrollTop + 50;
-                    terminal.innerHTML = formatted;
-                    if (isScrolledToBottom) {
-                        terminal.scrollTop = terminal.scrollHeight;
-                    }
-                } else {
-                    terminal.innerHTML = '<div class="text-slate-500">// Nenhum log disponível.</div>';
-                }
-            } catch (err) {
-                console.error("Erro ao buscar logs:", err);
-            }
-        }
-
-        function escaparHtml(text) {
-            const map = {
-                '&': '&amp;',
-                '<': '&lt;',
-                '>': '&gt;',
-                '"': '&quot;',
-                "'": '&#039;'
-            };
-            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
-        }
-
-        function copiarLogs() {
-            const terminal = document.getElementById('terminal-logs');
-            const range = document.createRange();
-            range.selectNode(terminal);
-            window.getSelection().removeAllRanges();
-            window.getSelection().addRange(range);
-            try {
-                document.execCommand('copy');
-                mostrarToast("Logs copiados para a área de transferência!");
-            } catch (err) {
-                mostrarToast("Erro ao copiar logs.", "error");
-            }
-            window.getSelection().removeAllRanges();
-        }
-
-        async function limparLogsArquivo() {
-            if (!confirm("Tem certeza que deseja limpar todo o histórico de logs do servidor?")) return;
-            try {
-                const response = await fetch('/api/logs/clear', { method: 'POST' });
-                if (response.ok) {
-                    mostrarToast("Histórico de logs limpo com sucesso!");
-                    carregarLogs();
-                } else {
-                    mostrarToast("Falha ao limpar logs.", "error");
-                }
-            } catch (err) {
-                mostrarToast("Erro ao limpar logs.", "error");
-            }
-        }
     </script>
     <style>
         body {
@@ -1757,7 +1665,6 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
             function connectHeartbeat() {
                 ws = new WebSocket(wsUrl);
                 ws.onclose = function() {
-                    // Tenta reconectar a cada 3 segundos se cair acidentalmente
                     setTimeout(connectHeartbeat, 3000);
                 };
                 ws.onerror = function() {
@@ -1766,6 +1673,7 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
             }
             connectHeartbeat();
         })();
+
         // Controle de logs do sistema
         let logsInterval = null;
 
@@ -1837,9 +1745,9 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
             window.getSelection().addRange(range);
             try {
                 document.execCommand('copy');
-                mostrarToast("Logs copiados para a área de transferência!");
+                showToast("Logs copiados para a área de transferência!");
             } catch (err) {
-                mostrarToast("Erro ao copiar logs.", "error");
+                showToast("Erro ao copiar logs.", "error");
             }
             window.getSelection().removeAllRanges();
         }
@@ -1849,13 +1757,13 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
             try {
                 const response = await fetch('/api/logs/clear', { method: 'POST' });
                 if (response.ok) {
-                    mostrarToast("Histórico de logs limpo com sucesso!");
+                    showToast("Histórico de logs limpo com sucesso!");
                     carregarLogs();
                 } else {
-                    mostrarToast("Falha ao limpar logs.", "error");
+                    showToast("Falha ao limpar logs.", "error");
                 }
             } catch (err) {
-                mostrarToast("Erro ao limpar logs.", "error");
+                showToast("Erro ao limpar logs.", "error");
             }
         }
     </script>
