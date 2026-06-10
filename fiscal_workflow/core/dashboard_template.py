@@ -226,6 +226,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <button onclick="carregarDocumentos()" class="p-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg text-sm transition-colors" title="Atualizar Tabela">
                         <i class="fa-solid fa-rotate"></i>
                     </button>
+                    <button onclick="excluirPeriodo()" id="btn-excluir-periodo" class="inline-flex items-center px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200/60 rounded-lg text-xs font-semibold transition-colors" title="Excluir notas da competência selecionada">
+                        <i class="fa-solid fa-calendar-minus mr-1.5"></i> Limpar Período
+                    </button>
+                    <button onclick="excluirNotasEmpresa()" id="btn-excluir-empresa-notes" class="inline-flex items-center px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200/60 rounded-lg text-xs font-semibold transition-colors" title="Excluir todas as notas desta empresa">
+                        <i class="fa-solid fa-eraser mr-1.5"></i> Limpar Notas da Empresa
+                    </button>
                     <button onclick="resetarBancoDados()" class="p-2 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200/50 rounded-lg text-sm transition-colors" title="Resetar/Limpar Todo o Banco de Dados">
                         <i class="fa-solid fa-trash-can"></i>
                     </button>
@@ -234,12 +240,28 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </span>
                 </div>
             </div>
+            <!-- Painel de Ações em Lote (oculto por padrão) -->
+            <div id="batch-actions-panel" class="hidden bg-slate-50 border-b border-slate-100 px-6 py-3 flex items-center justify-between text-xs transition-all duration-300">
+                <div class="flex items-center space-x-2">
+                    <span class="font-semibold text-slate-600"><span id="batch-selected-count">0</span> notas selecionadas:</span>
+                    <button onclick="excluirSelecionadas()" class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded font-medium transition-colors flex items-center ml-2">
+                        <i class="fa-solid fa-trash mr-1.5"></i> Excluir Selecionadas
+                    </button>
+                    <button onclick="encerrarSelecionadas()" class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium transition-colors flex items-center ml-2">
+                        <i class="fa-solid fa-lock mr-1.5"></i> Encerrar Selecionadas
+                    </button>
+                </div>
+                <button onclick="desmarcarTodos()" class="text-slate-400 hover:text-slate-600">
+                    Desmarcar todas
+                </button>
+            </div>
 
             <!-- Tabela de Documentos -->
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="bg-slate-50 text-slate-500 text-xs font-semibold border-b border-slate-100 uppercase tracking-wider">
+                            <th class="px-6 py-4 w-12"><input type="checkbox" id="select-all-docs" onclick="toggleSelectAllDocs(this)" class="rounded text-brand-500 focus:ring-brand-500"></th>
                             <th class="px-6 py-4">Chave de Acesso</th>
                             <th class="px-6 py-4">Tipo</th>
                             <th class="px-6 py-4 text-right">Valor XML (Bruto)</th>
@@ -1114,7 +1136,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 document.getElementById('consolidado-section').classList.add('hidden');
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="6" class="px-6 py-12 text-center text-slate-400">
+                        <td colspan="7" class="px-6 py-12 text-center text-slate-400">
                             <i class="fa-solid fa-filter text-3xl mb-2 text-slate-300 block"></i>
                             Selecione uma empresa no filtro para visualizar a Staging Area e a apuração fiscal.
                         </td>
@@ -1135,13 +1157,15 @@ HTML_CONTENT = """<!DOCTYPE html>
                 if (res.ok) {
                     const docs = await res.json();
                     tbody.innerHTML = '';
+                    document.getElementById('select-all-docs').checked = false;
+                    atualizarAcoesLote();
                     document.getElementById('doc-counter').textContent = `${docs.length} documento(s)`;
 
                     if (docs.length === 0) {
                         document.getElementById('consolidado-section').classList.add('hidden');
                         tbody.innerHTML = `
                             <tr>
-                                <td colspan="6" class="px-6 py-12 text-center text-slate-400">
+                                <td colspan="7" class="px-6 py-12 text-center text-slate-400">
                                     <i class="fa-solid fa-folder-open text-3xl mb-2 text-slate-300 block"></i>
                                     Nenhum XML importado na Staging Area desta empresa.
                                 </td>
@@ -1171,6 +1195,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         const isEncerrado = doc.status_apuracao === "Encerrado";
 
                         tr.innerHTML = `
+                            <td class="px-6 py-4"><input type="checkbox" class="doc-checkbox rounded text-brand-500 focus:ring-brand-500" value="${doc.id}" onchange="atualizarAcoesLote()"></td>
                             <td class="px-6 py-4 font-mono font-medium text-slate-700" title="${doc.chave_acesso}">
                                 ${doc.chave_acesso.substring(0, 8)}...${doc.chave_acesso.substring(36)}
                                 <button onclick="navigator.clipboard.writeText('${doc.chave_acesso}'); showToast('Chave copiada!', 'info')" class="ml-1 text-slate-300 hover:text-slate-500">
@@ -1807,6 +1832,177 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
                 }
             } catch (err) {
                 showToast("Erro ao limpar logs.", "error");
+            }
+        }
+
+        // Funções para Controle e Ações em Lote (Checkboxes)
+        function toggleSelectAllDocs(master) {
+            const checkboxes = document.querySelectorAll('.doc-checkbox');
+            checkboxes.forEach(cb => {
+                cb.checked = master.checked;
+            });
+            atualizarAcoesLote();
+        }
+
+        function desmarcarTodos() {
+            const master = document.getElementById('select-all-docs');
+            if (master) master.checked = false;
+            toggleSelectAllDocs({ checked: false });
+        }
+
+        function obterIdsSelecionados() {
+            const checkboxes = document.querySelectorAll('.doc-checkbox:checked');
+            return Array.from(checkboxes).map(cb => parseInt(cb.value));
+        }
+
+        function atualizarAcoesLote() {
+            const selecionados = obterIdsSelecionados();
+            const panel = document.getElementById('batch-actions-panel');
+            const counterSpan = document.getElementById('batch-selected-count');
+            
+            if (selecionados.length > 0) {
+                if (counterSpan) counterSpan.textContent = selecionados.length;
+                if (panel) {
+                    panel.classList.remove('hidden');
+                    panel.classList.add('flex');
+                }
+            } else {
+                if (panel) {
+                    panel.classList.add('hidden');
+                    panel.classList.remove('flex');
+                }
+            }
+        }
+
+        async function excluirSelecionadas() {
+            const ids = obterIdsSelecionados();
+            if (ids.length === 0) return;
+            if (!confirm(`Tem certeza que deseja excluir permanentemente as ${ids.length} nota(s) fiscal(is) selecionada(s)? Esta ação é irreversível!`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/documentos/excluir-em-lote`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+
+                if (response.ok) {
+                    showToast(`${ids.length} nota(s) excluída(s) com sucesso!`);
+                    desmarcarTodos();
+                    await carregarDocumentos();
+                } else {
+                    showToast("Erro ao excluir notas em lote.", "error");
+                }
+            } catch (err) {
+                showToast("Erro de rede ao excluir notas em lote.", "error");
+            }
+        }
+
+        async function encerrarSelecionadas() {
+            const ids = obterIdsSelecionados();
+            if (ids.length === 0) return;
+            if (!confirm(`Tem certeza que deseja encerrar e congelar o período das ${ids.length} nota(s) fiscal(is) selecionada(s)? Isso impedirá novos ajustes manuais nelas.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/documentos/encerrar-em-lote`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ids })
+                });
+
+                if (response.ok) {
+                    showToast(`${ids.length} nota(s) encerrada(s) com sucesso!`);
+                    desmarcarTodos();
+                    await carregarDocumentos();
+                } else {
+                    showToast("Erro ao encerrar notas em lote.", "error");
+                }
+            } catch (err) {
+                showToast("Erro de rede ao encerrar notas em lote.", "error");
+            }
+        }
+
+        async function excluirPeriodo() {
+            const selectEmpresa = document.getElementById('select-empresa');
+            const empresaId = selectEmpresa.value;
+            if (!empresaId) {
+                showToast("Selecione uma empresa antes de limpar o período.", "warning");
+                return;
+            }
+
+            const mesVal = document.getElementById('select-mes').value;
+            const anoVal = document.getElementById('select-ano').value;
+            
+            if (!mesVal || !anoVal) {
+                showToast("Selecione um mês e um ano específicos para limpar a competência.", "warning");
+                return;
+            }
+
+            const nomeMes = document.getElementById('select-mes').selectedOptions[0].textContent;
+            const descFiltro = `${nomeMes}/${anoVal}`;
+
+            if (!confirm(`⚠️ ATENÇÃO CRÍTICA!
+            
+Você está prestes a excluir permanentemente TODAS as notas fiscais da empresa ativa na competência ${descFiltro}.
+
+Esta ação é definitiva e irreversível! Deseja continuar?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/documentos?empresa_id=${empresaId}&mes=${mesVal}&ano=${anoVal}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showToast(`Notas da competência ${descFiltro} limpas com sucesso!`);
+                    desmarcarTodos();
+                    await carregarDocumentos();
+                } else {
+                    showToast("Erro ao limpar período fiscal.", "error");
+                }
+            } catch (err) {
+                showToast("Erro de rede ao limpar período fiscal.", "error");
+            }
+        }
+
+        async function excluirNotasEmpresa() {
+            const selectEmpresa = document.getElementById('select-empresa');
+            const empresaId = selectEmpresa.value;
+            if (!empresaId) {
+                showToast("Selecione uma empresa ativa antes de limpar suas notas.", "warning");
+                return;
+            }
+
+            const nomeEmpresa = selectEmpresa.selectedOptions[0].textContent;
+
+            if (!confirm(`⚠️ ALERTA DE SEGURANÇA!
+            
+Você está prestes a excluir permanentemente ABSOLUTAMENTE TODAS as notas fiscais importadas para a empresa:
+"${nomeEmpresa}"
+
+O cadastro da empresa será mantido intacto. Deseja prosseguir?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_URL}/documentos?empresa_id=${empresaId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    showToast(`Todas as notas da empresa "${nomeEmpresa}" foram excluídas!`);
+                    desmarcarTodos();
+                    await carregarDocumentos();
+                } else {
+                    showToast("Erro ao limpar notas da empresa.", "error");
+                }
+            } catch (err) {
+                showToast("Erro de rede ao limpar notas da empresa.", "error");
             }
         }
     </script>

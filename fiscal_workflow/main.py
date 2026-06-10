@@ -645,6 +645,69 @@ def deletar_documento(documento_id: int, db: Session = Depends(get_db)):
     return {"detail": "Documento fiscal apagado com sucesso!"}
 
 
+@app.delete("/documentos", status_code=status.HTTP_200_OK)
+def deletar_documentos_filtrados(
+    empresa_id: int,
+    mes: Optional[int] = None,
+    ano: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """Exclui documentos fiscais de uma empresa, opcionalmente filtrando por período (mês/ano)."""
+    from sqlalchemy import extract
+    query = db.query(DocumentoFiscal).filter(DocumentoFiscal.empresa_id == empresa_id)
+    if mes:
+        query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
+    if ano:
+        query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
+    
+    docs_to_delete = query.all()
+    count = len(docs_to_delete)
+    
+    for doc in docs_to_delete:
+        db.delete(doc)
+        
+    db.commit()
+    return {"detail": f"{count} documentos fiscais excluídos com sucesso!"}
+
+
+@app.post("/documentos/excluir-em-lote", status_code=status.HTTP_200_OK)
+def excluir_documentos_lote(
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """Exclui múltiplos documentos fiscais informados por uma lista de IDs."""
+    ids = payload.get("ids", [])
+    if not ids:
+        return {"detail": "Nenhum ID fornecido para exclusão."}
+        
+    docs_to_delete = db.query(DocumentoFiscal).filter(DocumentoFiscal.id.in_(ids)).all()
+    count = len(docs_to_delete)
+    for doc in docs_to_delete:
+        db.delete(doc)
+    db.commit()
+    return {"detail": f"{count} documentos fiscais excluídos com sucesso!"}
+
+
+@app.post("/documentos/encerrar-em-lote", status_code=status.HTTP_200_OK)
+def encerrar_documentos_lote(
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """Encerra múltiplos documentos fiscais informados por uma lista de IDs."""
+    ids = payload.get("ids", [])
+    if not ids:
+        return {"detail": "Nenhum ID fornecido para encerramento."}
+        
+    docs_to_close = db.query(DocumentoFiscal).filter(DocumentoFiscal.id.in_(ids)).all()
+    count = 0
+    for doc in docs_to_close:
+        if doc.status_apuracao != StatusApuracao.ENCERRADO:
+            doc.status_apuracao = StatusApuracao.ENCERRADO
+            count += 1
+    db.commit()
+    return {"detail": f"{count} documentos fiscais encerrados com sucesso!"}
+
+
 @app.post("/system/reset", status_code=status.HTTP_200_OK)
 def resetar_banco(db: Session = Depends(get_db)):
     """Limpa completamente todas as tabelas do banco de dados (Ajustes, Documentos e Empresas)."""

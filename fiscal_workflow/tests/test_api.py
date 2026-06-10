@@ -516,5 +516,95 @@ class TestFiscalAPI(unittest.TestCase):
         cons2 = resp_cons2.json()
         self.assertEqual(float(cons2["total_faturamento"]), 2000.00)
 
+    def test_excluir_periodo_api(self):
+        """Testa o endpoint de exclusão de notas fiscais por competência (DELETE /documentos)."""
+        # 1. Cadastra uma Empresa
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio Software Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+
+        # 2. Insere documentos
+        from datetime import datetime
+        db = next(override_get_db())
+        from fiscal_workflow.models.models import DocumentoFiscal
+        
+        doc1 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230512345678000199550010000001231234567891",
+            tipo_documento="NF-e",
+            valor_total=Decimal("1000.00"),
+            data_emissao=datetime(2026, 5, 15)
+        )
+        doc2 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230512345678000199550010000001231234567892",
+            tipo_documento="NF-e",
+            valor_total=Decimal("2000.00"),
+            data_emissao=datetime(2026, 6, 20)
+        )
+        db.add(doc1)
+        db.add(doc2)
+        db.commit()
+
+        # 3. Exclui por período (Maio/2026)
+        resp_del = self.client.delete(f"/documentos?empresa_id={emp_id}&mes=5&ano=2026")
+        self.assertEqual(resp_del.status_code, 200)
+        self.assertIn("1 documentos fiscais", resp_del.json()["detail"])
+
+        # 4. Verifica se sobrou apenas a nota de Junho/2026
+        resp_list = self.client.get(f"/documentos?empresa_id={emp_id}")
+        self.assertEqual(len(resp_list.json()), 1)
+        self.assertEqual(float(resp_list.json()[0]["valor_total"]), 2000.00)
+
+    def test_excluir_lote_ids_api(self):
+        """Testa o endpoint de exclusão de notas fiscais por lista de IDs (POST /documentos/excluir-em-lote)."""
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio Software Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+
+        # Insere documentos
+        from datetime import datetime
+        db = next(override_get_db())
+        from fiscal_workflow.models.models import DocumentoFiscal
+        
+        doc1 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230512345678000199550010000001231234567891",
+            tipo_documento="NF-e",
+            valor_total=Decimal("1000.00"),
+            data_emissao=datetime(2026, 5, 15)
+        )
+        doc2 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230512345678000199550010000001231234567892",
+            tipo_documento="NF-e",
+            valor_total=Decimal("2000.00"),
+            data_emissao=datetime(2026, 6, 20)
+        )
+        db.add(doc1)
+        db.add(doc2)
+        db.commit()
+
+        # Exclui em lote
+        resp_del = self.client.post("/documentos/excluir-em-lote", json={"ids": [doc1.id, doc2.id]})
+        self.assertEqual(resp_del.status_code, 200)
+        self.assertIn("2 documentos fiscais", resp_del.json()["detail"])
+
+        # Verifica se banco ficou vazio para essa empresa
+        resp_list = self.client.get(f"/documentos?empresa_id={emp_id}")
+        self.assertEqual(len(resp_list.json()), 0)
+
 if __name__ == "__main__":
     unittest.main()
