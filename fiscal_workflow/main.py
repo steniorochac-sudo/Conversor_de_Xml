@@ -84,6 +84,11 @@ with engine.connect() as conn:
             conn.execute(text("ALTER TABLE empresas ADD COLUMN cnae VARCHAR(7)"))
     except Exception:
         pass
+    try:
+        with conn.begin():
+            conn.execute(text("ALTER TABLE documentos_fiscais ADD COLUMN data_emissao TIMESTAMP"))
+    except Exception:
+        pass
 
 class HeartbeatManager:
     def __init__(self):
@@ -329,6 +334,13 @@ async def upload_xml(
                 db.refresh(empresa)
 
             # 4. Salva a nota fiscal na Staging Area
+            dt_emissao = None
+            if dados_nota.get("data_emissao"):
+                try:
+                    dt_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
+                except Exception:
+                    pass
+
             novo_doc = DocumentoFiscal(
                 empresa_id=empresa.id,
                 chave_acesso=dados_nota["chave_acesso"],
@@ -337,7 +349,8 @@ async def upload_xml(
                 valor_total=Decimal(str(dados_nota["valor_total"])),
                 status_apuracao=StatusApuracao.PENDENTE,
                 cstat=dados_nota.get("cstat", "100"),
-                itens=dados_nota["itens"]
+                itens=dados_nota["itens"],
+                data_emissao=dt_emissao
             )
 
             db.add(novo_doc)
@@ -352,14 +365,21 @@ async def upload_xml(
 def listar_documentos(
     empresa_id: Optional[int] = None, 
     status: Optional[StatusApuracao] = None,
+    mes: Optional[int] = None,
+    ano: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
     """Lista todos os documentos importados (Staging Area) com filtros opcionais."""
+    from sqlalchemy import extract
     query = db.query(DocumentoFiscal)
     if empresa_id:
         query = query.filter(DocumentoFiscal.empresa_id == empresa_id)
     if status:
         query = query.filter(DocumentoFiscal.status_apuracao == status)
+    if mes:
+        query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
+    if ano:
+        query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
     
     return query.all()
 
@@ -472,7 +492,12 @@ def apurar_documento(
 
 
 @app.get("/empresas/{empresa_id}/consolidado")
-def apurar_consolidado_empresa(empresa_id: int, db: Session = Depends(get_db)):
+def apurar_consolidado_empresa(
+    empresa_id: int, 
+    mes: Optional[int] = None,
+    ano: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
     """
     Realiza a apuração consolidada de impostos de todas as notas fiscais
     cadastradas na Staging Area para a empresa selecionada.
@@ -486,7 +511,13 @@ def apurar_consolidado_empresa(empresa_id: int, db: Session = Depends(get_db)):
         )
 
     # 2. Busca todas as notas da empresa
-    documentos = db.query(DocumentoFiscal).filter(DocumentoFiscal.empresa_id == empresa_id).all()
+    from sqlalchemy import extract
+    query = db.query(DocumentoFiscal).filter(DocumentoFiscal.empresa_id == empresa_id)
+    if mes:
+        query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
+    if ano:
+        query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
+    documentos = query.all()
 
     # 3. Inicializa calculadora tributária
     try:
@@ -594,7 +625,9 @@ def apurar_consolidado_empresa(empresa_id: int, db: Session = Depends(get_db)):
         "total_imposto": total_imposto,
         "aliquota_efetiva_consolidada": aliquota_efetiva,
         "detalhes": detalhes,
-        "memoria_calculo": memoria_calculo
+        "memoria_calculo": memoria_calculo,
+        "mes": mes,
+        "ano": ano
     }
 
 

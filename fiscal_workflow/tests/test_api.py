@@ -453,5 +453,68 @@ class TestFiscalAPI(unittest.TestCase):
             self.assertEqual(empresa_ti["categoria_simples"], "Serviços (Anexo III)")
             self.assertTrue(empresa_ti["sujeito_fator_r"])
 
+    def test_period_filtering(self):
+        """Testa o filtro de período (mês e ano) nas rotas de listagem e consolidação."""
+        # 1. Cadastra uma Empresa
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio Software Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        self.assertEqual(response_empresa.status_code, 201)
+        emp_id = response_empresa.json()["id"]
+
+        # 2. Insere documentos fiscais diretamente no banco com datas diferentes para testar o filtro
+        from datetime import datetime
+        db = next(override_get_db())
+        from fiscal_workflow.models.models import DocumentoFiscal
+        
+        doc1 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230512345678000199550010000001231234567891",
+            tipo_documento="NF-e",
+            valor_total=Decimal("1000.00"),
+            data_emissao=datetime(2026, 5, 15)
+        )
+        doc2 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230512345678000199550010000001231234567892",
+            tipo_documento="NF-e",
+            valor_total=Decimal("2000.00"),
+            data_emissao=datetime(2026, 6, 20)
+        )
+        db.add(doc1)
+        db.add(doc2)
+        db.commit()
+
+        # 3. Testa listagem filtrando por Maio/2026
+        resp_list = self.client.get(f"/documentos?empresa_id={emp_id}&mes=5&ano=2026")
+        self.assertEqual(resp_list.status_code, 200)
+        docs = resp_list.json()
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(float(docs[0]["valor_total"]), 1000.00)
+
+        # 4. Testa listagem filtrando por Junho/2026
+        resp_list2 = self.client.get(f"/documentos?empresa_id={emp_id}&mes=6&ano=2026")
+        self.assertEqual(resp_list2.status_code, 200)
+        docs2 = resp_list2.json()
+        self.assertEqual(len(docs2), 1)
+        self.assertEqual(float(docs2[0]["valor_total"]), 2000.00)
+
+        # 5. Testa consolidação de impostos filtrando por Maio/2026
+        resp_cons = self.client.get(f"/empresas/{emp_id}/consolidado?mes=5&ano=2026")
+        self.assertEqual(resp_cons.status_code, 200)
+        cons = resp_cons.json()
+        self.assertEqual(float(cons["total_faturamento"]), 1000.00)
+
+        # 6. Testa consolidação de impostos filtrando por Junho/2026
+        resp_cons2 = self.client.get(f"/empresas/{emp_id}/consolidado?mes=6&ano=2026")
+        self.assertEqual(resp_cons2.status_code, 200)
+        cons2 = resp_cons2.json()
+        self.assertEqual(float(cons2["total_faturamento"]), 2000.00)
+
 if __name__ == "__main__":
     unittest.main()

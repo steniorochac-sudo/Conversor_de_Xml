@@ -91,6 +91,7 @@ class DocumentoResponse(BaseModel):
     status_apuracao: StatusApuracao
     cstat: str
     itens: Optional[List[Any]] = None
+    data_emissao: Optional[datetime] = None
     
     # Auditoria de Ajustes Manuais
     ajustes: List[AjusteResponse] = []

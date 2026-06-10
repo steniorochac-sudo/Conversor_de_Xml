@@ -69,6 +69,7 @@ class DocumentoFiscal(Base):
     )
     itens: Mapped[list] = mapped_column(JSON, nullable=True)
     cstat: Mapped[str] = mapped_column(String(10), default="100", nullable=False)
+    data_emissao: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relacionamento reverso com Empresa
     empresa: Mapped["Empresa"] = relationship("Empresa", back_populates="documentos")

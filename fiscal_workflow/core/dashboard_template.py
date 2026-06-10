@@ -99,6 +99,33 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <select id="select-empresa" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-500">
                         <option value="">-- Nenhuma empresa cadastrada --</option>
                     </select>
+                    <div class="mt-4">
+                        <label class="block text-[11px] font-semibold text-slate-500 mb-1">Período Fiscal (Mês/Ano):</label>
+                        <div class="grid grid-cols-2 gap-2">
+                            <select id="select-mes" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                                <option value="">Todos os meses</option>
+                                <option value="1">Janeiro</option>
+                                <option value="2">Fevereiro</option>
+                                <option value="3">Março</option>
+                                <option value="4">Abril</option>
+                                <option value="5">Maio</option>
+                                <option value="6">Junho</option>
+                                <option value="7">Julho</option>
+                                <option value="8">Agosto</option>
+                                <option value="9">Setembro</option>
+                                <option value="10">Outubro</option>
+                                <option value="11">Novembro</option>
+                                <option value="12">Dezembro</option>
+                            </select>
+                            <select id="select-ano" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500">
+                                <option value="">Todos os anos</option>
+                                <option value="2024">2024</option>
+                                <option value="2025">2025</option>
+                                <option value="2026">2026</option>
+                                <option value="2027">2027</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
                 
                 <div id="info-empresa-box" class="mt-4 p-3 bg-slate-50 rounded-xl border border-slate-100 hidden">
@@ -1097,8 +1124,14 @@ HTML_CONTENT = """<!DOCTYPE html>
                 return;
             }
 
+            const mesVal = document.getElementById('select-mes').value;
+            const anoVal = document.getElementById('select-ano').value;
+            let url = `${API_URL}/documentos?empresa_id=${empresaId}`;
+            if (mesVal) url += `&mes=${mesVal}`;
+            if (anoVal) url += `&ano=${anoVal}`;
+
             try {
-                const res = await fetch(`${API_URL}/documentos?empresa_id=${empresaId}`);
+                const res = await fetch(url);
                 if (res.ok) {
                     const docs = await res.json();
                     tbody.innerHTML = '';
@@ -1198,8 +1231,18 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         async function carregarApuracaoConsolidada(empresaId) {
             const section = document.getElementById('consolidado-section');
+            const mesVal = document.getElementById('select-mes').value;
+            const anoVal = document.getElementById('select-ano').value;
+            let url = `${API_URL}/empresas/${empresaId}/consolidado`;
+            let params = [];
+            if (mesVal) params.push(`mes=${mesVal}`);
+            if (anoVal) params.push(`ano=${anoVal}`);
+            if (params.length > 0) {
+                url += `?${params.join('&')}`;
+            }
+
             try {
-                const res = await fetch(`${API_URL}/empresas/${empresaId}/consolidado`);
+                const res = await fetch(url);
                 if (res.ok) {
                     const data = await res.json();
                     consolidadoDataGlobal = data; // Armazena globalmente
