@@ -508,5 +508,109 @@ class TestTaxCalculators(unittest.TestCase):
         self.assertEqual(res_iii["aliquota_aplicada"].quantize(Decimal("0.0001")), Decimal("0.0652"))
         self.assertEqual(res_iii["imposto_calculado"], Decimal("65.20"))
 
+    def test_calculo_difal_e_impostos_entrada(self):
+        """Valida que notas de Entrada calculam apenas DIFAL (com Base Simples/Dupla e IPI) e ICMS-ST de compra."""
+        # 1. Caso Base Dupla com IPI (Bahia)
+        emp_ba = Empresa(
+            cnpj="12345678000199",
+            razao_social="Simples Comércio BA Ltda",
+            regime_tributario=RegimeTributario.SIMPLES_NACIONAL,
+            uf="BA"
+        )
+        self.session.add(emp_ba)
+        self.session.commit()
+
+        # Nota de entrada interestadual (origem São Paulo "35" -> destino Bahia "BA")
+        # Valor total: 1000.00, IPI: 50.00, ICMS destacado (Origem): 70.00
+        # Alíquota interestadual: 7% (SP -> BA)
+        # Alíquota interna BA: 20.5% (Base Dupla)
+        # Base Líquida = 1000.00 - 0.00 + 0.00 + 50.00 = 1050.00
+        # Valor Sem ICMS = 1050.00 - 70.00 = 980.00
+        # divisor = 1 - 0.205 = 0.795
+        # Base DIFAL = 980.00 / 0.795 = 1232.7044...
+        # DIFAL = (1232.7044... * 0.205) - 70.00 = 252.7044... - 70.00 = 182.70
+        # ICMS-ST destacado de compra: 50.00
+        doc_ba = DocumentoFiscal(
+            empresa_id=emp_ba.id,
+            chave_acesso="35230512345678000199550010000001231234567890", # SP code = 35
+            tipo_documento="NF-e",
+            tipo_operacao="Entrada",
+            valor_total=Decimal("1000.00"),
+            status_apuracao=StatusApuracao.PENDENTE,
+            itens=[{
+                "sequencia": 1,
+                "codigo_produto": "PROD001",
+                "descricao": "Item Interestadual BA",
+                "valor_total": 1000.00,
+                "desconto": 0.0,
+                "frete": 0.0,
+                "valor_ipi": 50.00,
+                "impostos": {
+                    "icms": {
+                        "cst": "00",
+                        "valor_st": 50.00,
+                        "valor": 70.00
+                    }
+                }
+            }]
+        )
+        self.session.add(doc_ba)
+        self.session.commit()
+
+        calc_ba = CalculadoraFactory.obter_calculadora(emp_ba.regime_tributario)
+        res_ba = calc_ba.calcular(doc_ba)
+
+        self.assertEqual(res_ba["detalhes"]["difal"], Decimal("182.70"))
+        self.assertEqual(res_ba["detalhes"]["icms_st_compra"], Decimal("50.00"))
+        self.assertEqual(res_ba["imposto_calculado"], Decimal("232.70")) # 182.70 + 50.00
+        self.assertIn("Nota Fiscal de Entrada (Compra)", res_ba["mensagem"])
+
+        # 2. Caso Base Simples (Pernambuco - PE, não está em ufs_base_dupla)
+        emp_pe = Empresa(
+            cnpj="12345678000188",
+            razao_social="Simples Comércio PE Ltda",
+            regime_tributario=RegimeTributario.SIMPLES_NACIONAL,
+            uf="PE"
+        )
+        self.session.add(emp_pe)
+        self.session.commit()
+
+        # Nota de entrada interestadual (origem São Paulo "35" -> destino Pernambuco "PE")
+        # Base Líquida = 1000.00 - 0.00 + 0.00 + 50.00 = 1050.00
+        # Alíquota interestadual: 7% (SP -> PE)
+        # Alíquota interna PE: 18% (Base Simples)
+        # DIFAL = 1050.00 * (18% - 7%) = 1050.00 * 11% = 115.50
+        doc_pe = DocumentoFiscal(
+            empresa_id=emp_pe.id,
+            chave_acesso="35230512345678000188550010000001231234567890", # SP code = 35
+            tipo_documento="NF-e",
+            tipo_operacao="Entrada",
+            valor_total=Decimal("1000.00"),
+            status_apuracao=StatusApuracao.PENDENTE,
+            itens=[{
+                "sequencia": 1,
+                "codigo_produto": "PROD002",
+                "descricao": "Item Interestadual PE",
+                "valor_total": 1000.00,
+                "desconto": 0.0,
+                "frete": 0.0,
+                "valor_ipi": 50.00,
+                "impostos": {
+                    "icms": {
+                        "cst": "00",
+                        "valor_st": 0.00,
+                        "valor": 70.00
+                    }
+                }
+            }]
+        )
+        self.session.add(doc_pe)
+        self.session.commit()
+
+        calc_pe = CalculadoraFactory.obter_calculadora(emp_pe.regime_tributario)
+        res_pe = calc_pe.calcular(doc_pe)
+
+        self.assertEqual(res_pe["detalhes"]["difal"], Decimal("115.50"))
+
 if __name__ == "__main__":
     unittest.main()

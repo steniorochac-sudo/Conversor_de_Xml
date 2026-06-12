@@ -161,6 +161,40 @@ HTML_CONTENT = """<!DOCTYPE html>
                     
                     <input type="file" id="file-input" class="hidden" accept=".xml" onchange="lidarComSelecaoArquivo(event)" multiple>
                 </div>
+                
+                <!-- Opções de Forçar Notas de Entrada de Terceiros -->
+                <div class="mt-4 p-4 bg-slate-50 rounded-xl border border-slate-200/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div class="flex items-center space-x-3">
+                        <input type="checkbox" id="chk-forcar-entrada" class="w-4 h-4 rounded text-brand-500 focus:ring-brand-500 border-slate-300 cursor-pointer text-xs" onchange="toggleForcarEntradaOptions()">
+                        <div class="cursor-pointer select-none" onclick="document.getElementById('chk-forcar-entrada').click()">
+                            <span class="text-xs font-bold text-slate-700 block">Importar como Notas de Entrada (Compras) da empresa ativa</span>
+                            <span class="text-[10px] text-slate-400 block">Associa todas as notas deste lote à empresa selecionada forçando a competência e o tipo de operação</span>
+                        </div>
+                    </div>
+                    <div id="forcar-entrada-opcoes" class="flex items-center space-x-2 hidden opacity-0 transition-opacity duration-200">
+                        <label class="text-[10px] font-bold text-slate-400 uppercase select-none">Competência:</label>
+                        <select id="import-mes" class="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 font-medium">
+                            <option value="1">Janeiro</option>
+                            <option value="2">Fevereiro</option>
+                            <option value="3">Março</option>
+                            <option value="4">Abril</option>
+                            <option value="5">Maio</option>
+                            <option value="6">Junho</option>
+                            <option value="7">Julho</option>
+                            <option value="8">Agosto</option>
+                            <option value="9">Setembro</option>
+                            <option value="10">Outubro</option>
+                            <option value="11">Novembro</option>
+                            <option value="12">Dezembro</option>
+                        </select>
+                        <select id="import-ano" class="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 font-medium">
+                            <option value="2024">2024</option>
+                            <option value="2025">2025</option>
+                            <option value="2026">2026</option>
+                            <option value="2027">2027</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -209,6 +243,35 @@ HTML_CONTENT = """<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
+                
+                <!-- Apuração de Entradas (Compras) -->
+                <div class="border-t border-slate-200/60 pt-6 mt-6">
+                    <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center">
+                        <i class="fa-solid fa-cart-shopping mr-2 text-brand-500"></i> Apuração de Compras (Entradas)
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- Total Compras -->
+                        <div class="bg-slate-50 p-4 rounded-xl border border-slate-100 relative overflow-hidden transition-all hover:shadow-md">
+                            <p class="text-xs text-slate-500 font-semibold uppercase tracking-wider">Total de Compras</p>
+                            <h3 id="c-compras-total" class="text-lg font-bold text-slate-800 mt-1 font-mono">R$ 0,00</h3>
+                            <p class="text-[10px] text-slate-400 mt-1" id="c-compras-count">0 notas de compra no período</p>
+                        </div>
+                        
+                        <!-- DIFAL Acumulado -->
+                        <div class="bg-gradient-to-br from-blue-50/50 to-blue-100/20 p-4 rounded-xl border border-blue-100 relative overflow-hidden transition-all hover:shadow-md">
+                            <p class="text-xs text-blue-600 font-semibold uppercase tracking-wider">DIFAL Interestadual Acumulado</p>
+                            <h3 id="c-compras-difal" class="text-lg font-bold text-blue-900 mt-1 font-mono">R$ 0,00</h3>
+                            <p class="text-[10px] text-blue-600 mt-1 opacity-80">Diferencial de alíquota interestadual</p>
+                        </div>
+                        
+                        <!-- ICMS-ST Compra -->
+                        <div class="bg-gradient-to-br from-cyan-50/50 to-cyan-100/20 p-4 rounded-xl border border-cyan-100 relative overflow-hidden transition-all hover:shadow-md">
+                            <p class="text-xs text-cyan-600 font-semibold uppercase tracking-wider">ICMS-ST destacado (Compra)</p>
+                            <h3 id="c-compras-icms-st" class="text-lg font-bold text-cyan-900 mt-1 font-mono">R$ 0,00</h3>
+                            <p class="text-[10px] text-cyan-600 mt-1 opacity-80">Substituição Tributária de entrada</p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -240,6 +303,18 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </span>
                 </div>
             </div>
+            <!-- Abas de Tipo de Operação -->
+            <div class="px-6 border-b border-slate-100 bg-slate-50/20 flex space-x-6 text-xs font-semibold">
+                <button onclick="setTipoOperacaoFilter(this, '')" class="tab-btn py-3 border-b-2 border-brand-500 text-brand-600 transition-all focus:outline-none">
+                    Todas as Notas
+                </button>
+                <button onclick="setTipoOperacaoFilter(this, 'Saída')" class="tab-btn py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 transition-all focus:outline-none">
+                    Saídas (Vendas / Serviços)
+                </button>
+                <button onclick="setTipoOperacaoFilter(this, 'Entrada')" class="tab-btn py-3 border-b-2 border-transparent text-slate-500 hover:text-slate-700 transition-all focus:outline-none">
+                    Entradas (Compras)
+                </button>
+            </div>
             <!-- Painel de Ações em Lote (oculto por padrão) -->
             <div id="batch-actions-panel" class="hidden bg-slate-50 border-b border-slate-100 px-6 py-3 flex items-center justify-between text-xs transition-all duration-300">
                 <div class="flex items-center space-x-2">
@@ -262,17 +337,20 @@ HTML_CONTENT = """<!DOCTYPE html>
                     <thead>
                         <tr class="bg-slate-50 text-slate-500 text-xs font-semibold border-b border-slate-100 uppercase tracking-wider">
                             <th class="px-6 py-4 w-12"><input type="checkbox" id="select-all-docs" onclick="toggleSelectAllDocs(this)" class="rounded text-brand-500 focus:ring-brand-500"></th>
+                            <th class="px-6 py-4">Número NF</th>
+                            <th class="px-6 py-4">Emissão</th>
+                            <th class="px-6 py-4">Parceiro</th>
                             <th class="px-6 py-4">Chave de Acesso</th>
                             <th class="px-6 py-4">Tipo</th>
                             <th class="px-6 py-4 text-right">Valor XML (Bruto)</th>
                             <th class="px-6 py-4 text-right">Valor Final (Staging)</th>
-                            <th class="px-6 py-4">Status de Apuração</th>
+                            <th class="px-6 py-4">Status</th>
                             <th class="px-6 py-4 text-center">Ações</th>
                         </tr>
                     </thead>
                     <tbody id="documentos-tbody" class="divide-y divide-slate-100 text-sm text-slate-600">
                         <tr>
-                            <td colspan="6" class="px-6 py-12 text-center text-slate-400">
+                            <td colspan="10" class="px-6 py-12 text-center text-slate-400">
                                 <i class="fa-solid fa-building-circle-exclamation text-3xl mb-2 text-slate-300 block"></i>
                                 Selecione uma Empresa acima para carregar a Staging Area.
                             </td>
@@ -509,6 +587,25 @@ HTML_CONTENT = """<!DOCTYPE html>
         const API_URL = '';
         const cnaeCache = {};
         let consolidadoDataGlobal = null;
+        let activeTipoOperacao = '';
+
+        function toggleForcarEntradaOptions() {
+            const chk = document.getElementById('chk-forcar-entrada');
+            const opts = document.getElementById('forcar-entrada-opcoes');
+            if (chk.checked) {
+                opts.classList.remove('hidden');
+                setTimeout(() => opts.classList.remove('opacity-0'), 50);
+                
+                // Pre-enche os seletores de importação com a competência ativa
+                const selectMes = document.getElementById('select-mes').value;
+                const selectAno = document.getElementById('select-ano').value;
+                if (selectMes) document.getElementById('import-mes').value = selectMes;
+                if (selectAno) document.getElementById('import-ano').value = selectAno;
+            } else {
+                opts.classList.add('opacity-0');
+                setTimeout(() => opts.classList.add('hidden'), 200);
+            }
+        }
 
         function fecharDrawerAuditoria() {
             const drawer = document.getElementById('drawer-auditoria');
@@ -516,6 +613,18 @@ HTML_CONTENT = """<!DOCTYPE html>
             setTimeout(() => {
                 drawer.classList.add('hidden');
             }, 300);
+        }
+
+        function setTipoOperacaoFilter(btn, value) {
+            activeTipoOperacao = value;
+            const container = btn.parentElement;
+            container.querySelectorAll('.tab-btn').forEach(b => {
+                b.classList.remove('border-brand-500', 'text-brand-600');
+                b.classList.add('border-transparent', 'text-slate-500');
+            });
+            btn.classList.add('border-brand-500', 'text-brand-600');
+            btn.classList.remove('border-transparent', 'text-slate-500');
+            carregarDocumentos();
         }
 
         function abrirDrawerAuditoria() {
@@ -1136,7 +1245,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                 document.getElementById('consolidado-section').classList.add('hidden');
                 tbody.innerHTML = `
                     <tr>
-                        <td colspan="7" class="px-6 py-12 text-center text-slate-400">
+                        <td colspan="10" class="px-6 py-12 text-center text-slate-400">
                             <i class="fa-solid fa-filter text-3xl mb-2 text-slate-300 block"></i>
                             Selecione uma empresa no filtro para visualizar a Staging Area e a apuração fiscal.
                         </td>
@@ -1151,6 +1260,7 @@ HTML_CONTENT = """<!DOCTYPE html>
             let url = `${API_URL}/documentos?empresa_id=${empresaId}`;
             if (mesVal) url += `&mes=${mesVal}`;
             if (anoVal) url += `&ano=${anoVal}`;
+            if (activeTipoOperacao) url += `&tipo_operacao=${activeTipoOperacao}`;
 
             try {
                 const res = await fetch(url);
@@ -1165,7 +1275,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                         document.getElementById('consolidado-section').classList.add('hidden');
                         tbody.innerHTML = `
                             <tr>
-                                <td colspan="7" class="px-6 py-12 text-center text-slate-400">
+                                <td colspan="10" class="px-6 py-12 text-center text-slate-400">
                                     <i class="fa-solid fa-folder-open text-3xl mb-2 text-slate-300 block"></i>
                                     Nenhum XML importado na Staging Area desta empresa.
                                 </td>
@@ -1183,6 +1293,19 @@ HTML_CONTENT = """<!DOCTYPE html>
                         const valFinal = formatarMoeda(doc.valor_final);
                         const temAjuste = Number(doc.valor_total) !== Number(doc.valor_final);
                         
+                        // Formatação de emissão e parceiro
+                        const dtEmi = doc.data_emissao ? new Date(doc.data_emissao).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : '---';
+                        const parceiroNome = doc.tipo_operacao === "Entrada" ? (doc.emitente_nome || 'Não informado') : (doc.destinatario_nome || 'Não informado');
+                        const parceiroLabel = doc.tipo_operacao === "Entrada" ? 'Fornecedor' : 'Cliente';
+                        const labelBadgeColor = doc.tipo_operacao === "Entrada" ? 'bg-blue-50 text-blue-700 border-blue-100' : 'bg-violet-50 text-violet-700 border-violet-100';
+                        
+                        const parceiroHtml = `
+                            <div class="flex flex-col">
+                                <span class="inline-flex items-center px-1.5 py-0.5 w-max rounded text-[9px] font-bold border ${labelBadgeColor} uppercase tracking-wider mb-1">${parceiroLabel}</span>
+                                <span class="text-xs font-semibold text-slate-700 max-w-[200px] truncate" title="${parceiroNome}">${parceiroNome}</span>
+                            </div>
+                        `;
+
                         // Badge de status
                         let statusColor = "bg-amber-100 text-amber-700 border border-amber-200/50";
                         if (doc.status_apuracao === "Em Revisão") {
@@ -1196,22 +1319,19 @@ HTML_CONTENT = """<!DOCTYPE html>
 
                         tr.innerHTML = `
                             <td class="px-6 py-4"><input type="checkbox" class="doc-checkbox rounded text-brand-500 focus:ring-brand-500" value="${doc.id}" onchange="atualizarAcoesLote()"></td>
-                            <td class="px-6 py-4 font-mono font-medium text-slate-700" title="${doc.chave_acesso}">
+                            <td class="px-6 py-4 font-bold text-slate-900">${doc.numero_nf || '---'}</td>
+                            <td class="px-6 py-4 text-slate-500 font-medium">${dtEmi}</td>
+                            <td class="px-6 py-4">${parceiroHtml}</td>
+                            <td class="px-6 py-4 font-mono font-medium text-slate-400" title="${doc.chave_acesso}">
                                 ${doc.chave_acesso.substring(0, 8)}...${doc.chave_acesso.substring(36)}
                                 <button onclick="navigator.clipboard.writeText('${doc.chave_acesso}'); showToast('Chave copiada!', 'info')" class="ml-1 text-slate-300 hover:text-slate-500">
                                     <i class="fa-regular fa-copy"></i>
                                 </button>
                             </td>
                             <td class="px-6 py-4">
-                                <div class="flex flex-wrap gap-1 items-center">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600">
-                                        ${doc.tipo_documento}
-                                    </span>
-                                    ${doc.tipo_operacao === "Entrada" ? 
-                                        `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200/40" title="Entrada / Compra"><i class="fa-solid fa-arrow-down mr-1"></i>Entrada</span>` : 
-                                        `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-50 text-violet-700 border border-violet-200/40" title="Saída / Venda"><i class="fa-solid fa-arrow-up mr-1"></i>Saída</span>`
-                                    }
-                                </div>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600">
+                                    ${doc.tipo_documento}
+                                </span>
                             </td>
                             <td class="px-6 py-4 text-right font-medium text-slate-500">${valXml}</td>
                             <td class="px-6 py-4 text-right font-bold ${temAjuste ? 'text-amber-600' : 'text-slate-900'}">
@@ -1284,6 +1404,12 @@ HTML_CONTENT = """<!DOCTYPE html>
                     }
                     document.getElementById('doc-counter').textContent = `${data.quantidade_documentos} documento(s) (${counterText})`;
                     
+                    const compras = data.compras || { total_compras: 0, total_difal: 0, total_icms_st: 0, quantidade_entradas: 0 };
+                    document.getElementById('c-compras-total').textContent = formatarMoeda(compras.total_compras);
+                    document.getElementById('c-compras-difal').textContent = formatarMoeda(compras.total_difal);
+                    document.getElementById('c-compras-icms-st').textContent = formatarMoeda(compras.total_icms_st);
+                    document.getElementById('c-compras-count').textContent = `${compras.quantidade_entradas} nota(s) de compra no período`;
+                    
                     const list = document.getElementById('c-detalhes-list');
                     list.innerHTML = '';
                     
@@ -1330,7 +1456,27 @@ HTML_CONTENT = """<!DOCTYPE html>
                 return;
             }
 
+            const chkForcar = document.getElementById('chk-forcar-entrada');
+            const selectEmpresa = document.getElementById('select-empresa');
+            
             const formData = new FormData();
+            
+            if (chkForcar && chkForcar.checked) {
+                const empresaId = selectEmpresa.value;
+                if (!empresaId) {
+                    showToast("Por favor, selecione uma empresa ativa antes de importar notas de entrada vinculadas.", "error");
+                    return;
+                }
+                
+                const mes = document.getElementById('import-mes').value;
+                const ano = document.getElementById('import-ano').value;
+                const paddedMes = mes.padStart(2, '0');
+                const competencia = `${ano}-${paddedMes}-01`;
+                
+                formData.append("empresa_id", empresaId);
+                formData.append("tipo_operacao_forcada", "Entrada");
+                formData.append("data_competencia", competencia);
+            }
             
             // Adiciona múltiplos arquivos no form-data sob a chave "files"
             xmlFiles.forEach(file => {
@@ -1565,7 +1711,120 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
                                 <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Memória de Cálculo (Módulos Concretos)</h4>
                     `;
 
-                    if (data.regime === "Simples Nacional") {
+                    if (data.mensagem.includes("Entrada") || (data.detalhes && (data.detalhes.difal !== undefined || data.detalhes.icms_st_compra !== undefined))) {
+                        const difalVal = data.detalhes.difal || 0;
+                        const stCompraVal = data.detalhes.icms_st_compra || 0;
+                        apuracaoHtml += `
+                                <div class="space-y-2">
+                                    <div class="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
+                                        <div class="flex items-center space-x-2">
+                                            <span class="p-1.5 bg-blue-100 text-blue-600 rounded-md text-xs font-bold"><i class="fa-solid fa-scale-unbalanced"></i></span>
+                                            <span class="text-xs font-medium text-slate-700">DIFAL Interestadual</span>
+                                        </div>
+                                        <span class="font-mono text-xs font-bold text-slate-900">R$ ${difalVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                    
+                                    <div class="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
+                                        <div class="flex items-center space-x-2">
+                                            <span class="p-1.5 bg-cyan-100 text-cyan-600 rounded-md text-xs font-bold"><i class="fa-solid fa-truck-ramp-box"></i></span>
+                                            <span class="text-xs font-medium text-slate-700">ICMS-ST Destacado (Compra)</span>
+                                        </div>
+                                        <span class="font-mono text-xs font-bold text-slate-900">R$ ${stCompraVal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                    </div>
+                                </div>
+                        `;
+                        
+                        if (data.memoria_calculo && data.memoria_calculo.detalhes_itens && data.memoria_calculo.detalhes_itens.length > 0) {
+                            apuracaoHtml += `
+                                <div class="mt-4 pt-4 border-t border-slate-200">
+                                    <h5 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 flex items-center">
+                                        <i class="fa-solid fa-list mr-1"></i> Memória de Cálculo por Item
+                                    </h5>
+                                    <div class="space-y-3">
+                            `;
+                            data.memoria_calculo.detalhes_itens.forEach((it, idx) => {
+                                const vTotal = Number(it.valor_total);
+                                const vDesc = Number(it.desconto);
+                                const vFrete = Number(it.frete);
+                                const vIpi = Number(it.valor_ipi) || 0;
+                                const difalCalc = Number(it.difal_calculado);
+                                const baseDifal = Number(it.base_difal_calculada);
+                                const icmsOrig = Number(it.icms_origem_deduzido) || 0;
+                                const vSt = Number(it.icms_st_destacado) || 0;
+                                const vLiq = vTotal - vDesc + vFrete + vIpi;
+                                
+                                apuracaoHtml += `
+                                    <div class="p-3 bg-white border border-slate-100 rounded-lg space-y-2 text-xs">
+                                        <div class="flex justify-between items-center font-semibold text-slate-800">
+                                            <span>#${idx + 1} - ${it.descricao}</span>
+                                            <span class="font-mono text-blue-600 font-bold">DIFAL: R$ ${difalCalc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-500 text-[11px]">
+                                            <div class="flex justify-between">
+                                                <span>Valor Item:</span>
+                                                <span class="font-mono text-slate-700">R$ ${vTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span>Desconto / Frete:</span>
+                                                <span class="font-mono text-slate-700">-${vDesc.toFixed(2)} / +${vFrete.toFixed(2)}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span>Valor IPI:</span>
+                                                <span class="font-mono text-slate-700">R$ ${vIpi.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div class="flex justify-between font-medium">
+                                                <span>Base Líquida (c/ IPI):</span>
+                                                <span class="font-mono text-slate-800">R$ ${vLiq.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span>Alíquota Inter / Interna:</span>
+                                                <span class="font-mono text-slate-700">${it.aliquota_interestadual.toFixed(1)}% / ${it.aliquota_interna_destino.toFixed(1)}%</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span>Fórmula DIFAL:</span>
+                                                <span class="font-mono font-semibold text-indigo-600 bg-indigo-50 px-1 rounded">Base ${it.tipo_base_difal}</span>
+                                            </div>
+                                        </div>
+                                        
+                                        ${it.tipo_base_difal === "Dupla" ? `
+                                            <div class="mt-1.5 p-2 bg-slate-50 rounded border border-slate-100 text-[10px] space-y-1 text-slate-600">
+                                                <div class="flex justify-between">
+                                                    <span>ICMS Origem Destacado:</span>
+                                                    <span class="font-mono">R$ ${icmsOrig.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                                </div>
+                                                <div class="flex justify-between font-medium">
+                                                    <span>Base DIFAL ("por dentro"):</span>
+                                                    <span class="font-mono">(${vLiq.toFixed(2)} - ${icmsOrig.toFixed(2)}) / (1 - ${(it.aliquota_interna_destino/100).toFixed(3)}) = R$ ${baseDifal.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                                </div>
+                                                <div class="flex justify-between text-slate-700">
+                                                    <span>Cálculo final:</span>
+                                                    <span class="font-mono">(${baseDifal.toFixed(2)} * ${(it.aliquota_interna_destino/100).toFixed(3)}) - ${icmsOrig.toFixed(2)} = R$ ${difalCalc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                                </div>
+                                            </div>
+                                        ` : `
+                                            <div class="mt-1.5 p-2 bg-slate-50 rounded border border-slate-100 text-[10px] space-y-1 text-slate-600">
+                                                <div class="flex justify-between font-medium">
+                                                    <span>Cálculo Base Simples:</span>
+                                                    <span class="font-mono">R$ ${vLiq.toLocaleString('pt-BR', { minimumFractionDigits: 2 })} * (${it.aliquota_interna_destino.toFixed(1)}% - ${it.aliquota_interestadual.toFixed(1)}%) = R$ ${difalCalc.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                                </div>
+                                            </div>
+                                        `}
+                                        
+                                        ${vSt > 0 ? `
+                                            <div class="flex justify-between text-[11px] text-cyan-600 font-semibold mt-1">
+                                                <span>ICMS-ST destacado neste item:</span>
+                                                <span class="font-mono">R$ ${vSt.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                        ` : ''}
+                                    </div>
+                                `;
+                            });
+                            apuracaoHtml += `
+                                    </div>
+                                </div>
+                            `;
+                        }
+                    } else if (data.regime === "Simples Nacional") {
                         apuracaoHtml += `
                                 <div class="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
                                     <div class="flex items-center space-x-2">

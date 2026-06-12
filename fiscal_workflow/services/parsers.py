@@ -94,6 +94,17 @@ def parse_nfe(xml_content: bytes) -> Dict[str, Any]:
     emitente_razao_social = get_xml_text(emit_elem, 'nfe:xNome', namespaces=ns)
     emitente_crt = get_xml_text(emit_elem, 'nfe:CRT', namespaces=ns)
 
+    # Elemento Destinatario (dest)
+    dest = inf_nfe.xpath('nfe:dest', namespaces=ns)
+    destinatario_cnpj = None
+    destinatario_nome = None
+    destinatario_uf = None
+    if dest:
+        dest_elem = dest[0]
+        destinatario_cnpj = get_xml_text(dest_elem, 'nfe:CNPJ', namespaces=ns) or get_xml_text(dest_elem, 'nfe:CPF', namespaces=ns)
+        destinatario_nome = get_xml_text(dest_elem, 'nfe:xNome', namespaces=ns)
+        destinatario_uf = get_xml_text(dest_elem, 'nfe:enderDest/nfe:UF', namespaces=ns)
+
     # Elemento Totais (total)
     total_val = 0.0
     totais = inf_nfe.xpath('//nfe:total/nfe:ICMSTot', namespaces=ns)
@@ -187,6 +198,9 @@ def parse_nfe(xml_content: bytes) -> Dict[str, Any]:
                 cofins_pcofins = get_xml_float(cofins_node, 'nfe:pCOFINS', namespaces=ns)
                 cofins_vcofins = get_xml_float(cofins_node, 'nfe:vCOFINS', namespaces=ns)
 
+            # Parsing do IPI
+            v_ipi = get_xml_float(imp, './/nfe:IPI/*/nfe:vIPI', namespaces=ns)
+
         # Monta a estrutura normalizada do item
         item_normalizado = {
             "sequencia": int(item_num),
@@ -199,6 +213,7 @@ def parse_nfe(xml_content: bytes) -> Dict[str, Any]:
             "valor_total": v_prod,
             "desconto": v_desc,
             "frete": v_frete,
+            "valor_ipi": v_ipi,
             "impostos": {
                 "icms": {
                     "cst": icms_cst,
@@ -245,6 +260,9 @@ def parse_nfe(xml_content: bytes) -> Dict[str, Any]:
         "emitente_cnpj": emitente_cnpj,
         "emitente_razao_social": emitente_razao_social,
         "emitente_crt": emitente_crt,
+        "destinatario_cnpj": destinatario_cnpj,
+        "destinatario_nome": destinatario_nome,
+        "destinatario_uf": destinatario_uf,
         "valor_total": total_val,
         "cstat": cstat,
         "itens": itens_extraidos

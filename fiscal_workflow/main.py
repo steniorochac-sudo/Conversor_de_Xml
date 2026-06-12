@@ -90,6 +90,26 @@ with engine.connect() as conn:
             conn.execute(text("ALTER TABLE documentos_fiscais ADD COLUMN data_emissao TIMESTAMP"))
     except Exception:
         pass
+    try:
+        with conn.begin():
+            conn.execute(text("ALTER TABLE empresas ADD COLUMN uf VARCHAR(2) DEFAULT 'BA'"))
+    except Exception:
+        pass
+    try:
+        with conn.begin():
+            conn.execute(text("ALTER TABLE documentos_fiscais ADD COLUMN numero_nf VARCHAR(20)"))
+    except Exception:
+        pass
+    try:
+        with conn.begin():
+            conn.execute(text("ALTER TABLE documentos_fiscais ADD COLUMN emitente_nome VARCHAR(255)"))
+    except Exception:
+        pass
+    try:
+        with conn.begin():
+            conn.execute(text("ALTER TABLE documentos_fiscais ADD COLUMN destinatario_nome VARCHAR(255)"))
+    except Exception:
+        pass
 
 class HeartbeatManager:
     def __init__(self):
@@ -126,6 +146,53 @@ app = FastAPI(
     description="API de ingestão de XMLs, Staging Area e motor de apuração fiscal",
     version="1.0.0"
 )
+
+@app.on_event("startup")
+def startup_backfill():
+    """Realiza o backfill automático dos campos novos das notas já cadastradas no banco."""
+    db = next(get_db())
+    try:
+        documentos = db.query(DocumentoFiscal).all()
+        for doc in documentos:
+            atualizado = False
+            # 1. Backfill do número da nota (extraído da chave de acesso)
+            if not doc.numero_nf and doc.chave_acesso:
+                try:
+                    if len(doc.chave_acesso) == 44:
+                        num_str = doc.chave_acesso[25:34].lstrip("0")
+                        doc.numero_nf = num_str if num_str else "0"
+                        atualizado = True
+                    elif doc.chave_acesso.startswith("NFSE"):
+                        doc.numero_nf = doc.chave_acesso[4:]
+                        atualizado = True
+                except Exception:
+                    pass
+                
+            # 2. Backfill dos parceiros
+            if not doc.emitente_nome:
+                if doc.tipo_operacao == "Saída":
+                    doc.emitente_nome = doc.empresa.razao_social
+                    atualizado = True
+                else:
+                    doc.emitente_nome = "Fornecedor Não Informado"
+                    atualizado = True
+            
+            if not doc.destinatario_nome:
+                if doc.tipo_operacao == "Entrada":
+                    doc.destinatario_nome = doc.empresa.razao_social
+                    atualizado = True
+                else:
+                    doc.destinatario_nome = "Cliente Não Informado"
+                    atualizado = True
+                    
+            if atualizado:
+                db.add(doc)
+        db.commit()
+        app_logger.info("Backfill de campos novos de notas fiscais concluído com sucesso.")
+    except Exception as e:
+        app_logger.error(f"Erro ao executar backfill de notas fiscais: {str(e)}")
+    finally:
+        db.close()
 
 @app.websocket("/ws/heartbeat")
 async def websocket_heartbeat(websocket: WebSocket):
@@ -195,7 +262,8 @@ def criar_empresa(empresa: EmpresaCreate, db: Session = Depends(get_db)):
         folha12=empresa.folha12 if empresa.folha12 is not None else Decimal("0.00"),
         sujeito_fator_r=empresa.sujeito_fator_r if empresa.sujeito_fator_r is not None else False,
         categoria_simples=empresa.categoria_simples if empresa.categoria_simples is not None else "Serviços (Anexo III)",
-        cnae=empresa.cnae
+        cnae=empresa.cnae,
+        uf=empresa.uf if empresa.uf is not None else "BA"
     )
     db.add(nova_empresa)
     db.commit()
@@ -224,6 +292,7 @@ def editar_empresa(empresa_id: int, empresa_update: EmpresaUpdate, db: Session =
     empresa.sujeito_fator_r = empresa_update.sujeito_fator_r
     empresa.categoria_simples = empresa_update.categoria_simples
     empresa.cnae = empresa_update.cnae
+    empresa.uf = empresa_update.uf
     
     db.commit()
     db.refresh(empresa)
@@ -235,27 +304,26 @@ def editar_empresa(empresa_id: int, empresa_update: EmpresaUpdate, db: Session =
 
 @app.post("/documentos/upload", response_model=List[DocumentoResponse], status_code=status.HTTP_201_CREATED)
 async def upload_xml(
-    empresa_id: Optional[int] = Form(None, description="[DEPRECATED] Ignorado pelo backend. O emitente sempre será autodetectado e cadastrado a partir do XML."),
+    empresa_id: Optional[int] = Form(None, description="ID da empresa para forçar o vínculo e a importação."),
+    tipo_operacao_forcada: Optional[str] = Form(None, description="Forçar tipo de operação ('Entrada' ou 'Saída')."),
+    data_competencia: Optional[str] = Form(None, description="Data da competência/entrada (formato YYYY-MM-DD ou YYYY-MM)."),
     files: List[UploadFile] = File(..., description="Arquivos XML de NF-e / NFC-e / NFS-e (lote)"),
     db: Session = Depends(get_db)
 ):
     """
     Recebe múltiplos arquivos XML em lote, realiza o parse de cada um,
-    autodetecta/autocadastra emitentes e salva na Staging Area. Pula duplicados de forma resiliente.
+    resolve a empresa (via parâmetro ou autodetecção pelo CNPJ) e salva na Staging Area.
     """
     documentos_salvos = []
     
     for file in files:
-        # Pula arquivos vazios ou não XML
         if not file.filename.lower().endswith(".xml"):
             continue
             
         try:
-            # 1. Lê e decodifica o arquivo XML enviado
             xml_content = await file.read()
             lista_notas = parse_documento_fiscal(xml_content)
         except Exception:
-            # Se um arquivo do lote falhar, apenas o pulamos para não quebrar a importação inteira
             continue
 
         for dados_nota in lista_notas:
@@ -265,12 +333,21 @@ async def upload_xml(
             ).first()
             
             if doc_existente:
-                # Se a nota já existe, verifica se o novo XML traz uma situação de cancelamento/atualização ou data de emissão faltante
                 dados_atualizados = False
-                if doc_existente.data_emissao is None and dados_nota.get("data_emissao"):
+                if doc_existente.data_emissao is None and (data_competencia or dados_nota.get("data_emissao")):
                     try:
-                        doc_existente.data_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
-                        dados_atualizados = True
+                        target_date = None
+                        if data_competencia:
+                            if len(data_competencia) == 10:
+                                target_date = datetime.fromisoformat(data_competencia)
+                            elif len(data_competencia) == 7:
+                                target_date = datetime.strptime(data_competencia, "%Y-%m")
+                        if not target_date and dados_nota.get("data_emissao"):
+                            target_date = datetime.fromisoformat(dados_nota["data_emissao"])
+                        
+                        if target_date:
+                            doc_existente.data_emissao = target_date
+                            dados_atualizados = True
                     except Exception:
                         pass
                 nova_cstat = dados_nota.get("cstat", "100")
@@ -284,69 +361,93 @@ async def upload_xml(
                 documentos_salvos.append(doc_existente)
                 continue
 
-            # 3. Resolução do Emitente (Empresa) - Sempre via Autodetecção pelo CNPJ do XML
-            cnpj_emitente = dados_nota["emitente_cnpj"]
-            if not cnpj_emitente:
-                continue # Pula se o XML não tiver dados do emitente
-                
-            empresa = db.query(Empresa).filter(Empresa.cnpj == cnpj_emitente).first()
+            # 3. Resolução da Empresa Dona da Nota (Parâmetro Explicito ou Emitente para Saída, Destinatário para Entrada)
+            tipo_operacao = tipo_operacao_forcada or dados_nota.get("tipo_operacao", "Saída")
+            is_entrada = tipo_operacao == "Entrada"
             
-            # Se a empresa não existir, autocadastra
-            if not empresa:
-                crt = dados_nota.get("emitente_crt")
-                if crt in ("1", "2"):
-                    regime = RegimeTributario.SIMPLES_NACIONAL
-                elif crt == "3":
-                    regime = RegimeTributario.LUCRO_PRESUMIDO
-                else:
-                    regime = RegimeTributario.SIMPLES_NACIONAL
+            if empresa_id:
+                empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+                if not empresa:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail=f"Empresa com ID {empresa_id} especificada no formulário não encontrada."
+                    )
+            else:
+                cnpj_empresa = dados_nota.get("destinatario_cnpj") if is_entrada else dados_nota.get("emitente_cnpj")
+                if not cnpj_empresa:
+                    cnpj_empresa = dados_nota.get("emitente_cnpj") or dados_nota.get("destinatario_cnpj")
+                    
+                if not cnpj_empresa:
+                    continue # Pula se o XML não tiver dados identificáveis da empresa
+                    
+                empresa = db.query(Empresa).filter(Empresa.cnpj == cnpj_empresa).first()
+                
+                # Se a empresa não existir, autocadastra
+                if not empresa:
+                    crt = dados_nota.get("emitente_crt") if not is_entrada else "1"
+                    if crt in ("1", "2"):
+                        regime = RegimeTributario.SIMPLES_NACIONAL
+                    elif crt == "3":
+                        regime = RegimeTributario.LUCRO_PRESUMIDO
+                    else:
+                        regime = RegimeTributario.SIMPLES_NACIONAL
 
-                # Busca o CNAE oficial via API externa de CNPJ
-                from fiscal_workflow.services.cnpj_client import buscar_cnae_oficial
-                cnae_resolvido = buscar_cnae_oficial(cnpj_emitente)
-                
-                sujeito_fator_r = False
-                categoria_simples = "Serviços (Anexo III)"
-                
-                if cnae_resolvido:
-                    # Tenta carregar as regras fiscais do CNAE local
-                    try:
-                        if CNAE_JSON_PATH.exists():
-                            with open(CNAE_JSON_PATH, "r", encoding="utf-8") as f:
-                                regras_locais = json.load(f)
-                            if cnae_resolvido in regras_locais:
-                                regra = regras_locais[cnae_resolvido]
-                                sujeito_fator_r = regra.get("fator_r", False)
-                                if regra.get("anexo") == "I":
-                                    categoria_simples = "Comércio (Anexo I)"
+                    from fiscal_workflow.services.cnpj_client import buscar_cnae_oficial
+                    cnae_resolvido = buscar_cnae_oficial(cnpj_empresa)
+                    
+                    sujeito_fator_r = False
+                    categoria_simples = "Serviços (Anexo III)"
+                    
+                    if cnae_resolvido:
+                        try:
+                            if CNAE_JSON_PATH.exists():
+                                with open(CNAE_JSON_PATH, "r", encoding="utf-8") as f:
+                                    regras_locais = json.load(f)
+                                if cnae_resolvido in regras_locais:
+                                    regra = regras_locais[cnae_resolvido]
+                                    sujeito_fator_r = regra.get("fator_r", False)
+                                    if regra.get("anexo") == "I":
+                                        categoria_simples = "Comércio (Anexo I)"
+                                    else:
+                                        categoria_simples = "Serviços (Anexo III)"
                                 else:
-                                    categoria_simples = "Serviços (Anexo III)"
-                            else:
-                                # Aplica heurísticas de fallback caso o CNAE não esteja catalogado
-                                if cnae_resolvido[:2] in ("45", "46", "47"):
-                                    categoria_simples = "Comércio (Anexo I)"
-                                elif cnae_resolvido[:2] in ("62", "86", "73", "74", "69"):
-                                    sujeito_fator_r = True
-                    except Exception:
-                        pass
+                                    if cnae_resolvido[:2] in ("45", "46", "47"):
+                                        categoria_simples = "Comércio (Anexo I)"
+                                    elif cnae_resolvido[:2] in ("62", "86", "73", "74", "69"):
+                                        sujeito_fator_r = True
+                        except Exception:
+                            pass
 
-                empresa = Empresa(
-                    cnpj=cnpj_emitente,
-                    razao_social=dados_nota["emitente_razao_social"] or f"Empresa CNPJ {cnpj_emitente}",
-                    regime_tributario=regime,
-                    rbt12=Decimal("0.00"),
-                    folha12=Decimal("0.00"),
-                    sujeito_fator_r=sujeito_fator_r,
-                    categoria_simples=categoria_simples,
-                    cnae=cnae_resolvido
-                )
-                db.add(empresa)
-                db.commit()
-                db.refresh(empresa)
+                    razao_social = (dados_nota.get("destinatario_nome") if is_entrada else dados_nota.get("emitente_razao_social")) or f"Empresa CNPJ {cnpj_empresa}"
+                    uf_empresa = (dados_nota.get("destinatario_uf") if is_entrada else "BA") or "BA"
+
+                    empresa = Empresa(
+                        cnpj=cnpj_empresa,
+                        razao_social=razao_social,
+                        regime_tributario=regime,
+                        rbt12=Decimal("0.00"),
+                        folha12=Decimal("0.00"),
+                        sujeito_fator_r=sujeito_fator_r,
+                        categoria_simples=categoria_simples,
+                        cnae=cnae_resolvido,
+                        uf=uf_empresa
+                    )
+                    db.add(empresa)
+                    db.commit()
+                    db.refresh(empresa)
 
             # 4. Salva a nota fiscal na Staging Area
             dt_emissao = None
-            if dados_nota.get("data_emissao"):
+            if data_competencia:
+                try:
+                    if len(data_competencia) == 10:
+                        dt_emissao = datetime.fromisoformat(data_competencia)
+                    elif len(data_competencia) == 7:
+                        dt_emissao = datetime.strptime(data_competencia, "%Y-%m")
+                except Exception:
+                    pass
+
+            if not dt_emissao and dados_nota.get("data_emissao"):
                 try:
                     dt_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
                 except Exception:
@@ -356,12 +457,15 @@ async def upload_xml(
                 empresa_id=empresa.id,
                 chave_acesso=dados_nota["chave_acesso"],
                 tipo_documento=dados_nota["tipo_documento"],
-                tipo_operacao=dados_nota.get("tipo_operacao", "Saída"),
+                tipo_operacao=tipo_operacao,
                 valor_total=Decimal(str(dados_nota["valor_total"])),
                 status_apuracao=StatusApuracao.PENDENTE,
                 cstat=dados_nota.get("cstat", "100"),
                 itens=dados_nota["itens"],
-                data_emissao=dt_emissao
+                data_emissao=dt_emissao,
+                numero_nf=dados_nota.get("numero_nf"),
+                emitente_nome=dados_nota.get("emitente_razao_social"),
+                destinatario_nome=dados_nota.get("destinatario_nome")
             )
 
             db.add(novo_doc)
@@ -378,6 +482,7 @@ def listar_documentos(
     status: Optional[StatusApuracao] = None,
     mes: Optional[int] = None,
     ano: Optional[int] = None,
+    tipo_operacao: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Lista todos os documentos importados (Staging Area) com filtros opcionais."""
@@ -391,6 +496,8 @@ def listar_documentos(
         query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
     if ano:
         query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
+    if tipo_operacao:
+        query = query.filter(DocumentoFiscal.tipo_operacao == tipo_operacao)
     
     return query.all()
 
@@ -530,6 +637,10 @@ def apurar_consolidado_empresa(
         query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
     documentos = query.all()
 
+    # Separa os documentos por tipo de operação para apuração correta
+    documentos_saida = [d for d in documentos if d.tipo_operacao == "Saída"]
+    documentos_entrada = [d for d in documentos if d.tipo_operacao == "Entrada"]
+
     # 3. Inicializa calculadora tributária
     try:
         calculadora = CalculadoraFactory.obter_calculadora(empresa.regime_tributario)
@@ -557,8 +668,8 @@ def apurar_consolidado_empresa(
     active_docs_count = 0
     canceled_docs_count = 0
 
-    # 4. Apura cada nota e consolida
-    for doc in documentos:
+    # 4. Apura cada nota de saída (venda/faturamento) e consolida
+    for doc in documentos_saida:
         apuracao_nota = calculadora.calcular(doc)
         if doc.cstat in ("101", "110", "301", "302"):
             canceled_docs_count += 1
@@ -572,14 +683,29 @@ def apurar_consolidado_empresa(
             if k in detalhes:
                 detalhes[k] += Decimal(str(v))
 
-    # Alíquota efetiva consolidada
+    # 4.1. Apura cada nota de entrada (compra)
+    total_compras = Decimal("0.00")
+    total_difal = Decimal("0.00")
+    total_icms_st_compra = Decimal("0.00")
+    active_entradas_count = 0
+    
+    for doc in documentos_entrada:
+        if doc.cstat in ("101", "110", "301", "302"):
+            continue
+        active_entradas_count += 1
+        apuracao_compra = calculadora.calcular(doc)
+        total_compras += Decimal(str(apuracao_compra["valor_final_base"]))
+        total_difal += Decimal(str(apuracao_compra["detalhes"].get("difal", 0.0)))
+        total_icms_st_compra += Decimal(str(apuracao_compra["detalhes"].get("icms_st_compra", 0.0)))
+
+    # Alíquota efetiva consolidada de saída
     aliquota_efetiva = (total_imposto / total_faturamento) if total_faturamento > 0 else Decimal("0.00")
 
-    # Consolida a memória de cálculo das notas ativas
+    # Consolida a memória de cálculo das notas de saída ativas
     memoria_calculo = {}
     if active_docs_count > 0:
         ref_mem = None
-        for doc in documentos:
+        for doc in documentos_saida:
             if doc.cstat not in ("101", "110", "301", "302"):
                 apuracao_nota = calculadora.calcular(doc)
                 if "memoria_calculo" in apuracao_nota:
@@ -594,7 +720,7 @@ def apurar_consolidado_empresa(
                 memoria_calculo["valor_sem_iss_retido"] = Decimal("0.00")
                 memoria_calculo["valor_sem_st"] = Decimal("0.00")
                 
-                for doc in documentos:
+                for doc in documentos_saida:
                     if doc.cstat in ("101", "110", "301", "302"):
                         continue
                     apur = calculadora.calcular(doc)
@@ -612,7 +738,7 @@ def apurar_consolidado_empresa(
                 memoria_calculo["valor_com_st"] = Decimal("0.00")
                 memoria_calculo["valor_sem_st"] = Decimal("0.00")
                 
-                for doc in documentos:
+                for doc in documentos_saida:
                     if doc.cstat in ("101", "110", "301", "302"):
                         continue
                     apur = calculadora.calcular(doc)
@@ -638,7 +764,13 @@ def apurar_consolidado_empresa(
         "detalhes": detalhes,
         "memoria_calculo": memoria_calculo,
         "mes": mes,
-        "ano": ano
+        "ano": ano,
+        "compras": {
+            "total_compras": total_compras,
+            "total_difal": total_difal,
+            "total_icms_st": total_icms_st_compra,
+            "quantidade_entradas": active_entradas_count
+        }
     }
 
 

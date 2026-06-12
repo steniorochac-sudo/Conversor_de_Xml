@@ -37,6 +37,7 @@ class Empresa(Base):
     sujeito_fator_r: Mapped[bool] = mapped_column(default=False, nullable=False)
     categoria_simples: Mapped[str] = mapped_column(String(50), default="Serviços (Anexo III)", nullable=False)
     cnae: Mapped[Optional[str]] = mapped_column(String(7), nullable=True)
+    uf: Mapped[str] = mapped_column(String(2), default="BA", nullable=False)
 
     # Relacionamento de um para muitos com DocumentoFiscal
     documentos: Mapped[List["DocumentoFiscal"]] = relationship(
@@ -70,6 +71,9 @@ class DocumentoFiscal(Base):
     itens: Mapped[list] = mapped_column(JSON, nullable=True)
     cstat: Mapped[str] = mapped_column(String(10), default="100", nullable=False)
     data_emissao: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    numero_nf: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    emitente_nome: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    destinatario_nome: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
 
     # Relacionamento reverso com Empresa
     empresa: Mapped["Empresa"] = relationship("Empresa", back_populates="documentos")

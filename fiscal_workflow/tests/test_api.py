@@ -81,6 +81,9 @@ class TestFiscalAPI(unittest.TestCase):
         self.assertEqual(doc_data["chave_acesso"], "35230512345678000199550010000001231234567890")
         self.assertEqual(doc_data["tipo_documento"], "NF-e")
         self.assertEqual(doc_data["status_apuracao"], "Pendente")
+        self.assertEqual(doc_data["numero_nf"], "123")
+        self.assertEqual(doc_data["emitente_nome"], "Stenio Software Ltda")
+        self.assertEqual(doc_data["destinatario_nome"], "Cliente Exemplo SA")
         self.assertEqual(float(doc_data["valor_total"]), 4350.00)
         self.assertEqual(float(doc_data["valor_final"]), 4350.00) # Inicialmente sem ajustes
         self.assertEqual(len(doc_data["itens"]), 1)
@@ -605,6 +608,161 @@ class TestFiscalAPI(unittest.TestCase):
         # Verifica se banco ficou vazio para essa empresa
         resp_list = self.client.get(f"/documentos?empresa_id={emp_id}")
         self.assertEqual(len(resp_list.json()), 0)
+
+    def test_consolidado_compras_e_vendas_exclusao_api(self):
+        """Testa que notas de entrada são excluídas da apuração consolidada de faturamento e incluídas no relatório de compras."""
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio Software Ltda",
+                "regime_tributario": "Simples Nacional",
+                "uf": "BA"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+
+        # Insere um documento de Saída (Faturamento) e um de Entrada (Compra Interestadual de SP "35" para BA "BA")
+        db = next(override_get_db())
+        from fiscal_workflow.models.models import DocumentoFiscal
+        from datetime import datetime
+        
+        doc_saida = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="29230512345678000199550010000001231234567891", # BA -> BA
+            tipo_documento="NF-e",
+            tipo_operacao="Saída",
+            valor_total=Decimal("5000.00"),
+            data_emissao=datetime(2026, 5, 10)
+        )
+        doc_entrada = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230599999999000199550010000001231234567892", # SP -> BA (Interestadual)
+            tipo_documento="NF-e",
+            tipo_operacao="Entrada",
+            valor_total=Decimal("1000.00"),
+            data_emissao=datetime(2026, 5, 15),
+            itens=[{
+                "sequencia": 1,
+                "codigo_produto": "PROD001",
+                "descricao": "Item Compra SP",
+                "valor_total": 1000.00,
+                "desconto": 0.0,
+                "frete": 0.0,
+                "impostos": {
+                    "icms": {
+                        "cst": "00",
+                        "valor_st": 80.00
+                    }
+                }
+            }]
+        )
+        db.add(doc_saida)
+        db.add(doc_entrada)
+        db.commit()
+
+        # Consulta consolidado do período (Maio/2026)
+        resp_cons = self.client.get(f"/empresas/{emp_id}/consolidado?mes=5&ano=2026")
+        self.assertEqual(resp_cons.status_code, 200)
+        res_data = resp_cons.json()
+
+        # Faturamento de saída deve ser exatamente 5000.00 (Entrada foi excluída)
+        self.assertEqual(float(res_data["total_faturamento"]), 5000.00)
+        # Imposto calculado de saída deve ser 6% de 5000 = 300.00 (DAS)
+        self.assertEqual(float(res_data["total_imposto"]), 300.00)
+
+        # Dados de compras devem estar preenchidos
+        compras = res_data["compras"]
+        self.assertEqual(float(compras["total_compras"]), 1000.00)
+        # DIFAL: 1000 * (20.5% - 7%) = 135.00
+        self.assertEqual(float(compras["total_difal"]), 135.00)
+        self.assertEqual(float(compras["total_icms_st"]), 80.00)
+        self.assertEqual(compras["quantidade_entradas"], 1)
+
+    def test_upload_nota_entrada_resolucao_empresa(self):
+        """Testa que notas de entrada cadastram a nota e resolvem a empresa pelo Destinatário."""
+        # 1. Cria um XML mock com tpNF=0 (Entrada), Destinatário específico e UF no enderDest
+        mock_xml_entrada = MOCK_NFE_XML.replace(
+            "<tpNF>1</tpNF>", "<tpNF>0</tpNF>"
+        ).replace(
+            "<dest>\n                <CNPJ>98765432000188</CNPJ>\n                <xNome>Cliente Exemplo SA</xNome>\n                <IE>444333222111</IE>\n            </dest>",
+            "<dest>\n                <CNPJ>99988877000166</CNPJ>\n                <xNome>Angi Compras Ltda</xNome>\n                <enderDest>\n                    <UF>SC</UF>\n                </enderDest>\n            </dest>"
+        ).replace(
+            "35230512345678000199550010000001231234567890", "35230512345678000199550010000001231234567899"
+        )
+
+        xml_file = io.BytesIO(mock_xml_entrada.encode('utf-8'))
+
+        # 2. Executa o upload da nota de entrada
+        response = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe_entrada.xml", xml_file, "text/xml"))]
+        )
+        self.assertEqual(response.status_code, 201)
+        doc_list = response.json()
+        self.assertEqual(len(doc_list), 1)
+        doc_data = doc_list[0]
+        self.assertEqual(doc_data["tipo_operacao"], "Entrada")
+
+        # 3. Verifica se a empresa destinatária foi cadastrada automaticamente (e não a emitente)
+        response_empresas = self.client.get("/empresas")
+        self.assertEqual(response_empresas.status_code, 200)
+        empresas = response_empresas.json()
+
+        # O CNPJ emitente "12345678000199" NÃO deve estar cadastrado como empresa (ele é fornecedor da compra)
+        emitente_cadastrado = any(e["cnpj"] == "12345678000199" for e in empresas)
+        self.assertFalse(emitente_cadastrado, "O emitente de uma nota de entrada não deve ser cadastrado como empresa.")
+
+        # O CNPJ destinatário "99988877000166" DEVE estar cadastrado como a empresa dona da nota
+        compradora = next((e for e in empresas if e["cnpj"] == "99988877000166"), None)
+        self.assertIsNotNone(compradora)
+        self.assertEqual(compradora["razao_social"], "Angi Compras Ltda")
+        self.assertEqual(compradora["uf"], "SC")
+        self.assertEqual(compradora["regime_tributario"], "Simples Nacional")
+
+        # O documento fiscal deve pertencer à empresa compradora
+        self.assertEqual(doc_data["empresa_id"], compradora["id"])
+
+    def test_upload_entrada_com_parametros_forcados(self):
+        """Testa que o upload com parâmetros de formulário força a associação e a operação (Entrada)."""
+        # 1. Cadastra uma Empresa ativa
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "99988877000166",
+                "razao_social": "Angi Compras Ltda",
+                "regime_tributario": "Simples Nacional",
+                "uf": "SC"
+            }
+        )
+        self.assertEqual(response_empresa.status_code, 201)
+        emp_id = response_empresa.json()["id"]
+
+        # 2. Prepara um XML normal de Saída (tpNF=1)
+        # O XML original diz que é uma venda (Saída) do emitente 12345678000199
+        xml_file = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+
+        # 3. Executa o upload passando parâmetros para forçar Entrada da empresa selecionada e competência
+        response = self.client.post(
+            "/documentos/upload",
+            data={
+                "empresa_id": emp_id,
+                "tipo_operacao_forcada": "Entrada",
+                "data_competencia": "2026-05"
+            },
+            files=[("files", ("nfe_terceiros.xml", xml_file, "text/xml"))]
+        )
+        self.assertEqual(response.status_code, 201)
+        doc_list = response.json()
+        self.assertEqual(len(doc_list), 1)
+        doc_data = doc_list[0]
+
+        # 4. Valida se a operação foi forçada para Entrada e vinculada à empresa certa
+        self.assertEqual(doc_data["tipo_operacao"], "Entrada")
+        self.assertEqual(doc_data["empresa_id"], emp_id)
+        
+        # A data de emissão deve ter sido forçada para a competência indicada (2026-05-01)
+        self.assertTrue(doc_data["data_emissao"].startswith("2026-05-01"))
 
 if __name__ == "__main__":
     unittest.main()

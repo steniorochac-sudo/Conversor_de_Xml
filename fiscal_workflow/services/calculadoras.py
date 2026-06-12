@@ -177,6 +177,113 @@ def obter_aliquota_efetiva_sn(rbt12: Decimal, folha12: Decimal, sujeito_fator_r:
 
 
 
+CODIGOS_UF = {
+    "11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA", "16": "AP", "17": "TO",
+    "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB", "26": "PE", "27": "AL", "28": "SE", "29": "BA",
+    "31": "MG", "32": "ES", "33": "RJ", "35": "SP",
+    "41": "PR", "42": "SC", "43": "RS",
+    "50": "MS", "51": "MT", "52": "GO", "53": "DF"
+}
+
+def calcular_impostos_entrada(documento: DocumentoFiscal, uf_empresa: str) -> Dict[str, Any]:
+    """
+    Calcula impostos específicos para notas de entrada (compras):
+    - DIFAL (Diferencial de Alíquota) em compras interestaduais de mercadorias.
+    - ICMS-ST destacado na nota de compra.
+    """
+    total_difal = Decimal("0.00")
+    total_icms_st = Decimal("0.00")
+    
+    chave = documento.chave_acesso
+    uf_origem = uf_empresa
+    if len(chave) >= 44 and chave.isdigit():
+        codigo_uf_origem = chave[:2]
+        uf_origem = CODIGOS_UF.get(codigo_uf_origem, uf_empresa)
+    
+    is_interestadual = (uf_origem != uf_empresa)
+    detalhes_itens = []
+    
+    # Bahia has 20.5% internal rate, others default to 18% unless specified
+    aliq_interna_destino = Decimal("0.205") if uf_empresa == "BA" else Decimal("0.18")
+    
+    # States that require the Double Base (Base Dupla / "por dentro") calculation method
+    ufs_base_dupla = {"BA", "MG", "PR", "RS", "AL", "GO", "DF", "SE", "TO", "RO"}
+    
+    if documento.itens:
+        for item in documento.itens:
+            impostos = item.get("impostos", {})
+            icms = impostos.get("icms", {})
+            v_st = Decimal(str(icms.get("valor_st", 0.0)))
+            total_icms_st += v_st
+            
+            difal_item = Decimal("0.00")
+            aliq_inter = Decimal("0.00")
+            v_ipi = Decimal(str(item.get("valor_ipi", 0.0)))
+            
+            v_prod = Decimal(str(item.get("valor_total", 0.0)))
+            v_desc = Decimal(str(item.get("desconto", 0.0)))
+            v_frete = Decimal(str(item.get("frete", 0.0)))
+            v_liq = v_prod - v_desc + v_frete + v_ipi
+            
+            icms_origem = Decimal(str(icms.get("valor", 0.0)))
+            base_difal = v_liq
+            tipo_base_difal = "Simples"
+            
+            if is_interestadual and documento.tipo_documento == "NF-e":
+                cst = str(icms.get("cst", "00"))
+                if cst and cst[0] in ("1", "2", "3", "8"):
+                    aliq_inter = Decimal("0.04")
+                elif uf_origem in ("SP", "RJ", "MG", "PR", "SC", "RS") and uf_empresa in ("BA", "PE", "CE", "MA", "PI", "RN", "PB", "AL", "SE", "ES", "GO", "MT", "MS", "DF", "AM", "PA", "AC", "RO", "RR", "AP", "TO"):
+                    aliq_inter = Decimal("0.07")
+                else:
+                    aliq_inter = Decimal("0.12")
+                
+                if uf_empresa in ufs_base_dupla:
+                    tipo_base_difal = "Dupla"
+                    valor_sem_icms = v_liq - icms_origem
+                    divisor = Decimal("1.0") - aliq_interna_destino
+                    if divisor > 0:
+                        base_difal = valor_sem_icms / divisor
+                    else:
+                        base_difal = valor_sem_icms
+                    
+                    difal_item = ((base_difal * aliq_interna_destino) - icms_origem).quantize(Decimal("0.01"))
+                else:
+                    tipo_base_difal = "Simples"
+                    base_difal = v_liq
+                    difal_item = (v_liq * (aliq_interna_destino - aliq_inter)).quantize(Decimal("0.01"))
+                
+                if difal_item < 0:
+                    difal_item = Decimal("0.00")
+                total_difal += difal_item
+            
+            detalhes_itens.append({
+                "descricao": item.get("descricao", "Item"),
+                "valor_total": v_prod,
+                "desconto": v_desc,
+                "frete": v_frete,
+                "valor_ipi": v_ipi,
+                "icms_st_destacado": v_st,
+                "uf_origem": uf_origem,
+                "uf_destino": uf_empresa,
+                "aliquota_interestadual": aliq_inter,
+                "aliquota_interna_destino": aliq_interna_destino,
+                "difal_calculado": difal_item,
+                "base_difal_calculada": base_difal,
+                "icms_origem_deduzido": icms_origem,
+                "tipo_base_difal": tipo_base_difal
+            })
+            
+    return {
+        "is_interestadual": is_interestadual,
+        "uf_origem": uf_origem,
+        "uf_destino": uf_empresa,
+        "total_difal": total_difal,
+        "total_icms_st": total_icms_st,
+        "detalhes_itens": detalhes_itens
+    }
+
+
 class CalculadoraSimplesNacional(CalculadoraInterface):
     """
     Estratégia concreta para o regime Simples Nacional (Anexo III ou Anexo V).
@@ -200,6 +307,53 @@ class CalculadoraSimplesNacional(CalculadoraInterface):
                     "das": Decimal("0.00")
                 },
                 "mensagem": f"Nota Fiscal {situacao} (cStat {cstat}). Faturamento e impostos desconsiderados para fins tributários."
+            }
+
+        # Se for nota de Entrada, executa cálculo de impostos de compras
+        if documento.tipo_operacao == "Entrada":
+            uf_empresa = getattr(documento.empresa, "uf", "BA")
+            r_entrada = calcular_impostos_entrada(documento, uf_empresa)
+            
+            memoria_calculo = {
+                "uf_origem": r_entrada["uf_origem"],
+                "uf_destino": r_entrada["uf_destino"],
+                "is_interestadual": r_entrada["is_interestadual"],
+                "total_difal": r_entrada["total_difal"].quantize(Decimal("0.01")),
+                "total_icms_st": r_entrada["total_icms_st"].quantize(Decimal("0.01")),
+                "detalhes_itens": [
+                    {
+                        **d,
+                        "valor_total": d["valor_total"].quantize(Decimal("0.01")),
+                        "desconto": d["desconto"].quantize(Decimal("0.01")),
+                        "frete": d["frete"].quantize(Decimal("0.01")),
+                        "valor_ipi": d["valor_ipi"].quantize(Decimal("0.01")),
+                        "base_difal_calculada": d["base_difal_calculada"].quantize(Decimal("0.01")),
+                        "icms_origem_deduzido": d["icms_origem_deduzido"].quantize(Decimal("0.01")),
+                        "icms_st_destacado": d["icms_st_destacado"].quantize(Decimal("0.01")),
+                        "aliquota_interestadual": (d["aliquota_interestadual"] * 100).quantize(Decimal("0.01")),
+                        "aliquota_interna_destino": (d["aliquota_interna_destino"] * 100).quantize(Decimal("0.01")),
+                        "difal_calculado": d["difal_calculado"].quantize(Decimal("0.01")),
+                        "tipo_base_difal": d["tipo_base_difal"]
+                    } for d in r_entrada["detalhes_itens"]
+                ]
+            }
+            
+            return {
+                "regime": RegimeTributario.SIMPLES_NACIONAL.value,
+                "chave_acesso": documento.chave_acesso,
+                "valor_original": documento.valor_total,
+                "valor_final_base": documento.valor_final,
+                "valor_com_st": Decimal("0.00"),
+                "valor_sem_st": Decimal("0.00"),
+                "aliquota_aplicada": Decimal("0.00"),
+                "imposto_calculado": r_entrada["total_difal"] + r_entrada["total_icms_st"],
+                "detalhes": {
+                    "difal": r_entrada["total_difal"].quantize(Decimal("0.01")),
+                    "icms_st_compra": r_entrada["total_icms_st"].quantize(Decimal("0.01"))
+                },
+                "mensagem": f"Nota Fiscal de Entrada (Compra). Isenta de faturamento/impostos de saída. "
+                           f"Calculado DIFAL: R$ {r_entrada['total_difal']:,.2f} | ICMS-ST Destacado: R$ {r_entrada['total_icms_st']:,.2f}.",
+                "memoria_calculo": memoria_calculo
             }
 
         empresa = documento.empresa
@@ -456,6 +610,53 @@ class CalculadoraLucroPresumido(CalculadoraInterface):
                     "iss": Decimal("0.00")
                 },
                 "mensagem": f"Nota Fiscal {situacao} (cStat {cstat}). Faturamento e impostos desconsiderados para fins tributários."
+            }
+
+        # Se for nota de Entrada, executa cálculo de impostos de compras
+        if documento.tipo_operacao == "Entrada":
+            uf_empresa = getattr(documento.empresa, "uf", "BA")
+            r_entrada = calcular_impostos_entrada(documento, uf_empresa)
+            
+            memoria_calculo = {
+                "uf_origem": r_entrada["uf_origem"],
+                "uf_destino": r_entrada["uf_destino"],
+                "is_interestadual": r_entrada["is_interestadual"],
+                "total_difal": r_entrada["total_difal"].quantize(Decimal("0.01")),
+                "total_icms_st": r_entrada["total_icms_st"].quantize(Decimal("0.01")),
+                "detalhes_itens": [
+                    {
+                        **d,
+                        "valor_total": d["valor_total"].quantize(Decimal("0.01")),
+                        "desconto": d["desconto"].quantize(Decimal("0.01")),
+                        "frete": d["frete"].quantize(Decimal("0.01")),
+                        "valor_ipi": d["valor_ipi"].quantize(Decimal("0.01")),
+                        "base_difal_calculada": d["base_difal_calculada"].quantize(Decimal("0.01")),
+                        "icms_origem_deduzido": d["icms_origem_deduzido"].quantize(Decimal("0.01")),
+                        "icms_st_destacado": d["icms_st_destacado"].quantize(Decimal("0.01")),
+                        "aliquota_interestadual": (d["aliquota_interestadual"] * 100).quantize(Decimal("0.01")),
+                        "aliquota_interna_destino": (d["aliquota_interna_destino"] * 100).quantize(Decimal("0.01")),
+                        "difal_calculado": d["difal_calculado"].quantize(Decimal("0.01")),
+                        "tipo_base_difal": d["tipo_base_difal"]
+                    } for d in r_entrada["detalhes_itens"]
+                ]
+            }
+            
+            return {
+                "regime": RegimeTributario.LUCRO_PRESUMIDO.value,
+                "chave_acesso": documento.chave_acesso,
+                "valor_original": documento.valor_total,
+                "valor_final_base": documento.valor_final,
+                "valor_com_st": Decimal("0.00"),
+                "valor_sem_st": Decimal("0.00"),
+                "aliquota_aplicada": Decimal("0.00"),
+                "imposto_calculado": r_entrada["total_difal"] + r_entrada["total_icms_st"],
+                "detalhes": {
+                    "difal": r_entrada["total_difal"].quantize(Decimal("0.01")),
+                    "icms_st_compra": r_entrada["total_icms_st"].quantize(Decimal("0.01"))
+                },
+                "mensagem": f"Nota Fiscal de Entrada (Compra). Isenta de faturamento/impostos de saída. "
+                           f"Calculado DIFAL: R$ {r_entrada['total_difal']:,.2f} | ICMS-ST Destacado: R$ {r_entrada['total_icms_st']:,.2f}.",
+                "memoria_calculo": memoria_calculo
             }
 
         base_calculo = documento.valor_final

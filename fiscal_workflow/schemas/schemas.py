@@ -45,6 +45,7 @@ class EmpresaCreate(BaseModel):
     sujeito_fator_r: Optional[bool] = Field(False, description="Atividade sujeita a Fator R")
     categoria_simples: Optional[str] = Field("Serviços (Anexo III)", description="Atividade / Anexo do Simples Nacional")
     cnae: Optional[str] = Field(None, description="CNAE da empresa")
+    uf: Optional[str] = Field("BA", description="UF (Estado) de origem da empresa", max_length=2, min_length=2)
 
     @field_validator('cnpj')
     @classmethod
@@ -65,6 +66,7 @@ class EmpresaResponse(BaseModel):
     sujeito_fator_r: bool
     categoria_simples: str
     cnae: Optional[str] = None
+    uf: str
 
 class EmpresaUpdate(BaseModel):
     razao_social: str = Field(..., min_length=2, max_length=255)
@@ -74,6 +76,7 @@ class EmpresaUpdate(BaseModel):
     sujeito_fator_r: bool = Field(False, description="Atividade sujeita a Fator R")
     categoria_simples: str = Field("Serviços (Anexo III)", description="Atividade / Anexo do Simples Nacional")
     cnae: Optional[str] = Field(None, description="CNAE da empresa")
+    uf: str = Field("BA", description="UF (Estado) de origem da empresa", max_length=2, min_length=2)
 
 # ==========================================
 # SCHEMAS PARA DOCUMENTO FISCAL
@@ -92,6 +95,9 @@ class DocumentoResponse(BaseModel):
     cstat: str
     itens: Optional[List[Any]] = None
     data_emissao: Optional[datetime] = None
+    numero_nf: Optional[str] = None
+    emitente_nome: Optional[str] = None
+    destinatario_nome: Optional[str] = None
     
     # Auditoria de Ajustes Manuais
     ajustes: List[AjusteResponse] = []

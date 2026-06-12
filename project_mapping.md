@@ -180,17 +180,24 @@ graph TD
 
 ### Fluxo B: Staging Area e Apuração Fiscal (API)
 1. **Upload / Ingestão**: O endpoint `/documentos/upload` recebe múltiplos XMLs. Ele faz o parse de cada um de maneira resiliente.
+   - Extrai o valor do IPI (`valor_ipi` da tag `<vIPI>`) para cada item e salva no banco de dados dentro do JSON de itens.
    - Se o CNPJ do emitente da nota **não existe** no banco de dados, o sistema **autocadastra** a empresa com base no CRT (Código de Regime Tributário) informado na nota (CRT 1/2 = Simples Nacional, CRT 3 = Lucro Presumido).
    - Se o documento já existe, mas o XML traz um status diferente (ex: cancelamento), o campo `cstat` é atualizado na Staging Area.
 2. **Auditoria e Ajustes Manuais**: No Dashboard, fiscais podem registrar ajustes monetários em `/documentos/{id}/ajustes` (ex: glosas, estornos, exclusões judiciais de bases de cálculo). O status do documento muda automaticamente para `Em Revisão` e bloqueia novas alterações caso o período esteja `Encerrado`.
 3. **Motor de Cálculo (Strategy Pattern)**: Quando `/documentos/{id}/apurar` é chamado:
    - A `CalculadoraFactory` identifica o Regime Tributário da empresa associada.
-   - Se **Simples Nacional**:
-     - Calcula a **alíquota efetiva** dinâmica a partir do Faturamento Acumulado (RBT12), da Folha de Salários e da regra do **Fator R** (Anexo III vs Anexo V) ou enquadramento explícito (Anexo I, II, III, IV ou V).
-     - **Anexo I (Comércio) & Anexo II (Indústria)**: Analisa os itens JSON do documento. Se houver produtos com Substituição Tributária de ICMS (CSTs de ST/CSOSN 500), calcula a **Segregação de ST** com base na fração de partilha tributária do ICMS (Anexo I ou Anexo II) para deduzir o imposto e gerar economia fiscal real. O Anexo II também calcula e destaca a partilha fixa do **IPI (7,50%)**.
-     - **Anexo IV & Anexo V**: Calcula a dedução de ISS Retido na fonte usando as frações de partilha específicas (Anexo IV: 44,5% a 40%; Anexo V: 14% a 23,33%). Para o Anexo IV, a **CPP (INSS Patronal)** de 20% sobre a folha é excluída do DAS, emitindo um lembrete previdenciário no Dashboard.
-   - Se **Lucro Presumido**:
-     - Executa a presunção federal clássica para serviços (Presunção de 32% base de cálculo): **PIS (0,65%)**, **COFINS (3,00%)**, **IRPJ (4,80%)** e **CSLL (2,88%)**.
+   - Se a nota for de **Entrada (Compra)**:
+     - Calcula o **DIFAL interestadual** e o **ICMS-ST de compra**.
+     - Soma o IPI na base líquida do item: `v_prod - v_desc + v_frete + v_ipi`.
+     - Detecta automaticamente a UF de destino: aplica a fórmula de **Base Dupla (por dentro)** para os estados **BA, MG, PR, RS, AL, GO, DF, SE, TO, RO** (deduzindo o ICMS de origem destacada e aplicando o divisor) e a de **Base Simples** para as demais UFs.
+     - Retorna as memórias de cálculo com os valores detalhados de IPI, base de cálculo e fórmulas utilizadas.
+   - Se a nota for de **Saída (Venda)**:
+     - Se **Simples Nacional**:
+       - Calcula a **alíquota efetiva** dinâmica a partir do Faturamento Acumulado (RBT12), da Folha de Salários e da regra do **Fator R** (Anexo III vs Anexo V) ou enquadramento explícito (Anexo I, II, III, IV ou V).
+       - **Anexo I (Comércio) & Anexo II (Indústria)**: Analisa os itens JSON do documento. Se houver produtos com Substituição Tributária de ICMS (CSTs de ST/CSOSN 500), calcula a **Segregação de ST** com base na fração de partilha tributária do ICMS (Anexo I ou Anexo II) para deduzir o imposto e gerar economia fiscal real. O Anexo II também calcula e destaca a partilha fixa do **IPI (7,50%)**.
+       - **Anexo IV & Anexo V**: Calcula a dedução de ISS Retido na fonte usando as frações de partilha específicas (Anexo IV: 44,5% a 40%; Anexo V: 14% a 23,33%). Para o Anexo IV, a **CPP (INSS Patronal)** de 20% sobre a folha é excluída do DAS, emitindo um lembrete previdenciário no Dashboard.
+     - Se **Lucro Presumido**:
+       - Executa a presunção federal clássica para serviços (Presunção de 32% base de cálculo): **PIS (0,65%)**, **COFINS (3,00%)**, **IRPJ (4,80%)** e **CSLL (2,88%)**.
    - Se a nota fiscal possuir `cstat` de **Cancelamento ou Denegação** (`101`, `110`, `301`, `302`), o faturamento e os impostos são zerados automaticamente, emitindo uma mensagem de alerta.
 
 ---
