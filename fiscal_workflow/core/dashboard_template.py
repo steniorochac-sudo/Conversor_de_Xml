@@ -1825,18 +1825,55 @@ Esta ação é definitiva e IRREVERSÍVEL. Deseja prosseguir para a etapa de con
                             `;
                         }
                     } else if (data.regime === "Simples Nacional") {
-                        apuracaoHtml += `
-                                <div class="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
-                                    <div class="flex items-center space-x-2">
-                                        <span class="p-1.5 bg-brand-100 text-brand-600 rounded-md text-xs font-bold"><i class="fa-solid fa-receipt"></i></span>
-                                        <span class="text-xs font-medium text-slate-700">DAS (Imposto Unificado)</span>
+                        if (data.memoria_calculo && data.memoria_calculo.anexos && Object.keys(data.memoria_calculo.anexos).length > 0) {
+                            apuracaoHtml += `<div class="space-y-3">`;
+                            for (const [anexoNome, details] of Object.entries(data.memoria_calculo.anexos)) {
+                                if (Number(details.base_calculo) <= 0) continue;
+                                apuracaoHtml += `
+                                    <div class="p-4 bg-white border border-slate-100 rounded-xl shadow-sm space-y-2">
+                                        <div class="flex justify-between items-center">
+                                            <div class="flex items-center space-x-2">
+                                                <span class="p-1.5 bg-indigo-50 text-indigo-600 rounded-md text-xs font-bold"><i class="fa-solid fa-layer-group"></i></span>
+                                                <span class="text-xs font-bold text-slate-800">${anexoNome}</span>
+                                            </div>
+                                            <span class="font-mono text-xs font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded">${details.enquadramento}</span>
+                                        </div>
+                                        <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-slate-500 text-[11px] border-t border-slate-100 pt-2">
+                                            <div class="flex justify-between">
+                                                <span>Base de Cálculo:</span>
+                                                <span class="font-mono text-slate-700">R$ ${Number(details.base_calculo).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span>Alíquota Nominal / Ded.:</span>
+                                                <span class="font-mono text-slate-700">${Number(details.aliq_nom).toFixed(2)}% / R$ ${Number(details.deducao).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                            <div class="flex justify-between">
+                                                <span>Alíquota Efetiva:</span>
+                                                <span class="font-mono text-slate-700 font-bold">${Number(details.aliq_efetiva).toFixed(4)}%</span>
+                                            </div>
+                                            <div class="flex justify-between font-bold text-slate-800">
+                                                <span>Imposto Calculado:</span>
+                                                <span class="font-mono text-emerald-600">R$ ${Number(details.imposto_calculado).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                            </div>
+                                        </div>
                                     </div>
-                                    <div class="text-right">
-                                        <span class="text-[10px] text-slate-400 mr-2">Alíquota: ${(data.aliquota_aplicada * 100).toFixed(2)}%</span>
-                                        <span class="font-mono text-xs font-bold text-slate-900">R$ ${data.detalhes.das.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                `;
+                            }
+                            apuracaoHtml += `</div>`;
+                        } else {
+                            apuracaoHtml += `
+                                    <div class="flex justify-between items-center p-3 bg-white border border-slate-100 rounded-lg shadow-sm">
+                                        <div class="flex items-center space-x-2">
+                                            <span class="p-1.5 bg-brand-100 text-brand-600 rounded-md text-xs font-bold"><i class="fa-solid fa-receipt"></i></span>
+                                            <span class="text-xs font-medium text-slate-700">DAS (Imposto Unificado)</span>
+                                        </div>
+                                        <div class="text-right">
+                                            <span class="text-[10px] text-slate-400 mr-2">Alíquota: ${(data.aliquota_aplicada * 100).toFixed(2)}%</span>
+                                            <span class="font-mono text-xs font-bold text-slate-900">R$ ${data.detalhes.das.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</span>
+                                        </div>
                                     </div>
-                                </div>
-                        `;
+                            `;
+                        }
                     } else if (data.regime === "Lucro Presumido") {
                         const det = data.detalhes;
                         apuracaoHtml += `
