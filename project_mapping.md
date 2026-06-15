@@ -192,12 +192,13 @@ graph TD
      - Detecta automaticamente a UF de destino: aplica a fórmula de **Base Dupla (por dentro)** para os estados **BA, MG, PR, RS, AL, GO, DF, SE, TO, RO** (deduzindo o ICMS de origem destacada e aplicando o divisor) e a de **Base Simples** para as demais UFs.
      - Retorna as memórias de cálculo com os valores detalhados de IPI, base de cálculo e fórmulas utilizadas.
    - Se a nota for de **Saída (Venda)**:
-     - Se **Simples Nacional**:
-       - Calcula a **alíquota efetiva** dinâmica a partir do Faturamento Acumulado (RBT12), da Folha de Salários e da regra do **Fator R** (Anexo III vs Anexo V) ou enquadramento explícito (Anexo I, II, III, IV ou V).
-       - **Anexo I (Comércio) & Anexo II (Indústria)**: Analisa os itens JSON do documento. Se houver produtos com Substituição Tributária de ICMS (CSTs de ST/CSOSN 500), calcula a **Segregação de ST** com base na fração de partilha tributária do ICMS (Anexo I ou Anexo II) para deduzir o imposto e gerar economia fiscal real. O Anexo II também calcula e destaca a partilha fixa do **IPI (7,50%)**.
-       - **Anexo IV & Anexo V**: Calcula a dedução de ISS Retido na fonte usando as frações de partilha específicas (Anexo IV: 44,5% a 40%; Anexo V: 14% a 23,33%). Para o Anexo IV, a **CPP (INSS Patronal)** de 20% sobre a folha é excluída do DAS, emitindo um lembrete previdenciário no Dashboard.
-     - Se **Lucro Presumido**:
-       - Executa a presunção federal clássica para serviços (Presunção de 32% base de cálculo): **PIS (0,65%)**, **COFINS (3,00%)**, **IRPJ (4,80%)** e **CSLL (2,88%)**.
+      - Se **Simples Nacional**:
+        - Realiza a **Apuração Multifachas / Segregação por Anexo**: Iterando sobre os itens da nota fiscal, classifica cada um por CFOP e tipo de documento (NFS-e para serviços: Anexo III, IV ou V; NF-e de comércio: Anexo I; NF-e de indústria: Anexo II).
+        - Calcula a alíquota efetiva específica de cada anexo com base na receita bruta acumulada da empresa (RBT12) e Fator R.
+        - Deduz o ISS retido no caso de serviços e o ICMS-ST no caso de produtos (ST Segregado).
+        - Consolida as bases de cálculo e gera as chaves de impostos específicos por anexo (`das_anexo_i`, `das_anexo_ii`, `das_anexo_iii`, etc), além de calcular a alíquota média ponderada consolidada (`aliquota_aplicada`) e o imposto total.
+      - Se **Lucro Presumido**:
+        - Executa a presunção federal clássica para serviços (Presunção de 32% base de cálculo): **PIS (0,65%)**, **COFINS (3,00%)**, **IRPJ (4,80%)** e **CSLL (2,88%)**.
    - Se a nota fiscal possuir `cstat` de **Cancelamento ou Denegação** (`101`, `110`, `301`, `302`), o faturamento e os impostos são zerados automaticamente, emitindo uma mensagem de alerta.
 
 ---
