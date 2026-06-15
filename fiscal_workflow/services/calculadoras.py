@@ -201,6 +201,8 @@ def calcular_impostos_entrada(documento: DocumentoFiscal, uf_empresa: str) -> Di
         uf_origem = CODIGOS_UF.get(codigo_uf_origem, uf_empresa)
     
     is_interestadual = (uf_origem != uf_empresa)
+    if uf_origem == "SP" and uf_empresa == "BA":
+        is_interestadual = True
     detalhes_itens = []
     
     # Bahia has 20.5% internal rate, others default to 18% unless specified
@@ -213,23 +215,30 @@ def calcular_impostos_entrada(documento: DocumentoFiscal, uf_empresa: str) -> Di
         for item in documento.itens:
             impostos = item.get("impostos", {})
             icms = impostos.get("icms", {})
-            v_st = Decimal(str(icms.get("valor_st", 0.0)))
+            cfop = str(item.get("cfop", ""))
+            is_isento = False
+            # CFOPs starting with 19/29/39 (remessas/comodato) or 12/22/32 (devoluções) are tax-exempt on Entrada
+            # Also handle if the supplier sent 59/69/79/52/62/72, which are the counterparts on Entrada
+            if cfop and cfop.startswith(("19", "29", "39", "12", "22", "32", "59", "69", "79", "52", "62", "72")):
+                is_isento = True
+            
+            v_st = Decimal(str(icms.get("valor_st", 0.0))) if not is_isento else Decimal("0.00")
             total_icms_st += v_st
             
             difal_item = Decimal("0.00")
             aliq_inter = Decimal("0.00")
-            v_ipi = Decimal(str(item.get("valor_ipi", 0.0)))
+            v_ipi = Decimal(str(item.get("valor_ipi", 0.0))) if not is_isento else Decimal("0.00")
             
             v_prod = Decimal(str(item.get("valor_total", 0.0)))
             v_desc = Decimal(str(item.get("desconto", 0.0)))
             v_frete = Decimal(str(item.get("frete", 0.0)))
             v_liq = v_prod - v_desc + v_frete + v_ipi
             
-            icms_origem = Decimal(str(icms.get("valor", 0.0)))
+            icms_origem = Decimal(str(icms.get("valor", 0.0))) if not is_isento else Decimal("0.00")
             base_difal = v_liq
             tipo_base_difal = "Simples"
             
-            if is_interestadual and documento.tipo_documento == "NF-e":
+            if not is_isento and is_interestadual and documento.tipo_documento == "NF-e":
                 cst = str(icms.get("cst", "00"))
                 if cst and cst[0] in ("1", "2", "3", "8"):
                     aliq_inter = Decimal("0.04")
@@ -357,25 +366,253 @@ class CalculadoraSimplesNacional(CalculadoraInterface):
             }
 
         empresa = documento.empresa
-        
-        # O cálculo baseia-se no valor final (XML original + ajustes de staging)
-        base_calculo = documento.valor_final
+        rbt12 = getattr(empresa, "rbt12", Decimal("0.00"))
+        folha12 = getattr(empresa, "folha12", Decimal("0.00"))
+        sujeito_fator_r = getattr(empresa, "sujeito_fator_r", False)
         categoria_simples = getattr(empresa, "categoria_simples", "Serviços (Anexo III)")
         
-        # Determina a alíquota a aplicar
+        # O cálculo baseia-se nos itens do documento
+        itens = documento.itens
+        if not itens:
+            itens = [{
+                "sequencia": 1,
+                "descricao": "Nota Fiscal (Sem itens discriminados no XML)",
+                "cfop": "0000",
+                "valor_total": float(documento.valor_total),
+                "desconto": 0.0,
+                "frete": 0.0,
+                "valor_ipi": 0.0,
+                "impostos": {}
+            }]
+            
+        base_calculo = Decimal("0.00")
+        total_imposto = Decimal("0.00")
+        valor_com_st = Decimal("0.00")
+        valor_sem_st = Decimal("0.00")
+        valor_com_iss_retido = Decimal("0.00")
+        valor_sem_iss_retido = Decimal("0.00")
+        
+        itens_calculados = []
+        
+        for item in itens:
+            cfop = str(item.get("cfop", ""))
+            
+            # 1. Determinação do Anexo/Tabela do Item
+            if (cfop in ("5933", "6933")) or documento.tipo_documento == "NFS-e":
+                if categoria_simples.startswith("Serviços"):
+                    anexo_item = categoria_simples
+                else:
+                    anexo_item = "Serviços (Anexo III)"
+            elif cfop and cfop.startswith(("59", "69", "79", "52", "62", "72")):
+                anexo_item = "Excluído"
+            elif cfop.startswith(("5101", "5103", "5104", "5401", "5403", "6101", "6103", "6104", "6401", "6403")):
+                anexo_item = "Indústria (Anexo II)"
+            elif cfop.startswith(("5102", "5115", "5405", "6102", "6115", "6405")):
+                anexo_item = "Comércio (Anexo I)"
+            else:
+                anexo_item = categoria_simples
+                
+            # Valores do item
+            it_val = Decimal(str(item.get("valor_total", 0.0)))
+            it_desc = Decimal(str(item.get("desconto", 0.0)))
+            it_frete = Decimal(str(item.get("frete", 0.0)))
+            it_ipi = Decimal(str(item.get("valor_ipi", 0.0)))
+            v_liq = it_val - it_desc + it_frete + it_ipi
+            
+            if anexo_item == "Excluído":
+                itens_calculados.append({
+                    "sequencia": item.get("sequencia", 1),
+                    "descricao": item.get("descricao", "Item"),
+                    "cfop": cfop,
+                    "valor_total": it_val,
+                    "valor_liquido": v_liq,
+                    "anexo_aplicado": "Excluído",
+                    "aliquota_efetiva": Decimal("0.00"),
+                    "imposto_calculado": Decimal("0.00"),
+                    "st_aplicado": False,
+                    "iss_retido_aplicado": False,
+                    "detalhe_calculo": "Isento / Não tributável"
+                })
+                continue
+                
+            base_calculo += v_liq
+            
+            # Alíquota Efetiva do Item
+            if aliquota is not None:
+                aliquota_item = aliquota
+            else:
+                anexo_para_calculo = anexo_item
+                if "Anexo V" in anexo_para_calculo:
+                    # Força Fator R para o cálculo correto no Anexo V
+                    aliquota_item = obter_aliquota_efetiva_sn(rbt12, folha12, True, anexo_para_calculo)
+                else:
+                    aliquota_item = obter_aliquota_efetiva_sn(rbt12, folha12, sujeito_fator_r, anexo_para_calculo)
+                    
+            # Segregações
+            icms_share = Decimal("0.00")
+            iss_share = Decimal("0.00")
+            tem_st = False
+            tem_iss_retido = False
+            
+            impostos_item = item.get("impostos", {})
+            
+            if "Comércio" in anexo_item:
+                if rbt12 <= Decimal("180000.00"):
+                    icms_share = Decimal("0.34")
+                elif rbt12 <= Decimal("360000.00"):
+                    icms_share = Decimal("0.34")
+                elif rbt12 <= Decimal("720000.00"):
+                    icms_share = Decimal("0.335")
+                elif rbt12 <= Decimal("1800000.00"):
+                    icms_share = Decimal("0.335")
+                elif rbt12 <= Decimal("3600000.00"):
+                    icms_share = Decimal("0.335")
+                else:
+                    icms_share = Decimal("0.335")
+                    
+                icms_item = impostos_item.get("icms", {})
+                if icms_item.get("substituicao_tributaria") or icms_item.get("cst") in ("10", "30", "60", "70", "90", "201", "202", "203", "500", "900"):
+                    tem_st = True
+                    
+            elif "Indústria" in anexo_item:
+                if rbt12 <= Decimal("180000.00"):
+                    icms_share = Decimal("0.3200")
+                elif rbt12 <= Decimal("360000.00"):
+                    icms_share = Decimal("0.3200")
+                elif rbt12 <= Decimal("720000.00"):
+                    icms_share = Decimal("0.3250")
+                elif rbt12 <= Decimal("1800000.00"):
+                    icms_share = Decimal("0.3250")
+                elif rbt12 <= Decimal("3600000.00"):
+                    icms_share = Decimal("0.3250")
+                else:
+                    icms_share = Decimal("0.3300")
+                    
+                icms_item = impostos_item.get("icms", {})
+                if icms_item.get("substituicao_tributaria") or icms_item.get("cst") in ("10", "30", "60", "70", "90", "201", "202", "203", "500", "900"):
+                    tem_st = True
+                    
+            elif "Serviços" in anexo_item or "Anexo III" in anexo_item or "Anexo IV" in anexo_item or "Anexo V" in anexo_item:
+                if "Anexo IV" in anexo_item:
+                    if rbt12 <= Decimal("180000.00"):
+                        iss_share = Decimal("0.4450")
+                    else:
+                        iss_share = Decimal("0.4000")
+                elif "Anexo V" in anexo_item:
+                    if rbt12 <= Decimal("180000.00"):
+                        iss_share = Decimal("0.1400")
+                    elif rbt12 <= Decimal("360000.00"):
+                        iss_share = Decimal("0.1700")
+                    elif rbt12 <= Decimal("720000.00"):
+                        iss_share = Decimal("0.1835")
+                    elif rbt12 <= Decimal("1800000.00"):
+                        iss_share = Decimal("0.1835")
+                    elif rbt12 <= Decimal("3600000.00"):
+                        iss_share = Decimal("0.1885")
+                    else:
+                        iss_share = Decimal("0.2333")
+                else:
+                    # Anexo III
+                    if rbt12 <= Decimal("180000.00"):
+                        iss_share = Decimal("0.3350")
+                    elif rbt12 <= Decimal("360000.00"):
+                        iss_share = Decimal("0.3200")
+                    elif rbt12 <= Decimal("720000.00"):
+                        iss_share = Decimal("0.3250")
+                    elif rbt12 <= Decimal("1800000.00"):
+                        iss_share = Decimal("0.3250")
+                    elif rbt12 <= Decimal("360000.00"):
+                        iss_share = Decimal("0.3350")
+                    else:
+                        iss_share = Decimal("0.00")
+                        
+                iss_item = impostos_item.get("iss", {})
+                if iss_item.get("retido"):
+                    tem_iss_retido = True
+            
+            # Aplica dedução de ST ou ISS Retido
+            if tem_st:
+                tax_rate_item = aliquota_item * (Decimal("1.0") - icms_share)
+                detalhe = f"R$ {v_liq:,.2f} * {aliquota_item*100:.4f}% * (1 - {icms_share*100:.2f}% ST)"
+                valor_com_st += v_liq
+            elif tem_iss_retido:
+                tax_rate_item = aliquota_item * (Decimal("1.0") - iss_share)
+                detalhe = f"R$ {v_liq:,.2f} * {aliquota_item*100:.4f}% * (1 - {iss_share*100:.2f}% ISS Ret)"
+                valor_com_iss_retido += v_liq
+            else:
+                tax_rate_item = aliquota_item
+                detalhe = f"R$ {v_liq:,.2f} * {aliquota_item*100:.4f}%"
+                if "Comércio" in anexo_item or "Indústria" in anexo_item:
+                    valor_sem_st += v_liq
+                else:
+                    valor_sem_iss_retido += v_liq
+                    
+            imposto_item = (v_liq * tax_rate_item).quantize(Decimal("0.01"))
+            total_imposto += imposto_item
+            
+            itens_calculados.append({
+                "sequencia": item.get("sequencia", 1),
+                "descricao": item.get("descricao", "Item"),
+                "cfop": cfop,
+                "valor_total": it_val,
+                "valor_liquido": v_liq,
+                "anexo_aplicado": anexo_item,
+                "aliquota_efetiva": aliquota_item,
+                "imposto_calculado": imposto_item,
+                "st_aplicado": tem_st,
+                "iss_retido_aplicado": tem_iss_retido,
+                "detalhe_calculo": detalhe
+            })
+            
+        # Adiciona ajustes manuais registrados na Staging Area
+        ajustes_sum = documento.valor_final - documento.valor_total
+        imposto_ajuste = Decimal("0.00")
+        if ajustes_sum != 0:
+            base_calculo += ajustes_sum
+            if base_calculo < 0:
+                base_calculo = Decimal("0.00")
+                
+            # Calcula o imposto do ajuste usando a alíquota padrão da empresa
+            if aliquota is not None:
+                aliquota_padrao = aliquota
+            else:
+                aliquota_padrao = obter_aliquota_efetiva_sn(rbt12, folha12, sujeito_fator_r, categoria_simples)
+            imposto_ajuste = (ajustes_sum * aliquota_padrao).quantize(Decimal("0.01"))
+            total_imposto += imposto_ajuste
+            
+            # Adiciona o ajuste como um item virtual de ajuste
+            itens_calculados.append({
+                "sequencia": 999,
+                "descricao": "Ajuste Manual Registrado na Staging Area",
+                "cfop": "0000",
+                "valor_total": ajustes_sum,
+                "valor_liquido": ajustes_sum,
+                "anexo_aplicado": "Ajuste",
+                "aliquota_efetiva": aliquota_padrao,
+                "imposto_calculado": imposto_ajuste,
+                "st_aplicado": False,
+                "iss_retido_aplicado": False,
+                "detalhe_calculo": f"Ajuste R$ {ajustes_sum:,.2f} * {aliquota_padrao*100:.4f}%"
+            })
+            
+            # Ajusta os campos de ST/ISS correspondentes
+            if "Comércio" in categoria_simples or "Indústria" in categoria_simples:
+                valor_sem_st += ajustes_sum
+            else:
+                valor_sem_iss_retido += ajustes_sum
+                
+        # Garante que as somas parciais de ST/ISS fiquem consistentes com a base final
+        if valor_com_st > base_calculo:
+            valor_com_st = base_calculo
+        if valor_com_iss_retido > base_calculo:
+            valor_com_iss_retido = base_calculo
+            
+        # Reconstrução da mensagem original e determinação da aliquota_aplicada como a alíquota base da empresa
         if aliquota is not None:
-            aliquota_aplicada = aliquota
+            aliquota_padrao = aliquota
             mensagem = "Apuração DAS realizada com alíquota customizada informada manualmente."
         else:
-            rbt12 = getattr(empresa, "rbt12", Decimal("0.00"))
-            folha12 = getattr(empresa, "folha12", Decimal("0.00"))
-            sujeito_fator_r = getattr(empresa, "sujeito_fator_r", False)
-            if "Anexo V" in categoria_simples:
-                sujeito_fator_r = True
-            
-            aliquota_aplicada = obter_aliquota_efetiva_sn(rbt12, folha12, sujeito_fator_r, categoria_simples)
-            
-            # Monta mensagem descritiva amigável
+            aliquota_padrao = obter_aliquota_efetiva_sn(rbt12, folha12, sujeito_fator_r, categoria_simples)
             if categoria_simples == "Comércio (Anexo I)":
                 mensagem = f"DAS calculado pelo Anexo I (Comércio). RBT12 acumulado: R$ {rbt12:,.2f}."
             elif categoria_simples == "Indústria (Anexo II)":
@@ -394,172 +631,119 @@ class CalculadoraSimplesNacional(CalculadoraInterface):
         if documento.tipo_documento == "NFS-e":
             mensagem = f"[NFS-e] " + mensagem
 
-        # Fração de ICMS no Simples Nacional para segregação de ST
-        icms_share = Decimal("0.00")
+        # Determina os shares para a mensagem consolidada e a memória de cálculo
+        icms_share_msg = Decimal("0.00")
         if categoria_simples == "Comércio (Anexo I)":
-            rbt12 = getattr(empresa, "rbt12", Decimal("0.00"))
             if rbt12 <= Decimal("180000.00"):
-                icms_share = Decimal("0.34")
+                icms_share_msg = Decimal("0.34")
             elif rbt12 <= Decimal("360000.00"):
-                icms_share = Decimal("0.34")
+                icms_share_msg = Decimal("0.34")
             elif rbt12 <= Decimal("720000.00"):
-                icms_share = Decimal("0.335")
-            elif rbt12 <= Decimal("1800000.00"):
-                icms_share = Decimal("0.335")
-            elif rbt12 <= Decimal("3600000.00"):
-                icms_share = Decimal("0.335")
+                icms_share_msg = Decimal("0.335")
             else:
-                icms_share = Decimal("0.335")
+                icms_share_msg = Decimal("0.335")
         elif categoria_simples == "Indústria (Anexo II)":
-            rbt12 = getattr(empresa, "rbt12", Decimal("0.00"))
             if rbt12 <= Decimal("180000.00"):
-                icms_share = Decimal("0.3200")
+                icms_share_msg = Decimal("0.3200")
             elif rbt12 <= Decimal("360000.00"):
-                icms_share = Decimal("0.3200")
+                icms_share_msg = Decimal("0.3200")
             elif rbt12 <= Decimal("720000.00"):
-                icms_share = Decimal("0.3250")
+                icms_share_msg = Decimal("0.3250")
             elif rbt12 <= Decimal("1800000.00"):
-                icms_share = Decimal("0.3250")
+                icms_share_msg = Decimal("0.3250")
             elif rbt12 <= Decimal("3600000.00"):
-                icms_share = Decimal("0.3250")
+                icms_share_msg = Decimal("0.3250")
             else:
-                icms_share = Decimal("0.3300")
+                icms_share_msg = Decimal("0.3300")
 
-        # Fração de IPI no Anexo II (Indústria)
-        ipi_share = Decimal("0.0750") if categoria_simples == "Indústria (Anexo II)" else Decimal("0.00")
-
-        # Identifica faturamento com Substituição Tributária (ICMS-ST) nos itens
-        valor_com_st = Decimal("0.00")
-        if documento.itens:
-            for item in documento.itens:
-                impostos = item.get("impostos", {})
-                icms = impostos.get("icms", {})
-                if icms.get("substituicao_tributaria") or icms.get("cst") in ("10", "30", "60", "70", "90", "201", "202", "203", "500", "900"):
-                    # SUBTRACT THE UNCONDITIONAL DISCOUNT TO GET THE NET VALUE!
-                    it_val = Decimal(str(item.get("valor_total", 0.0)))
-                    it_desc = Decimal(str(item.get("desconto", 0.0)))
-                    valor_com_st += (it_val - it_desc)
-        
-        if valor_com_st > base_calculo:
-            valor_com_st = base_calculo
-        valor_sem_st = base_calculo - valor_com_st
-        
-        # Fração de ISS no Simples Nacional para segregação de retenção de ISS
-        iss_share = Decimal("0.00")
-        rbt12 = getattr(empresa, "rbt12", Decimal("0.00"))
+        iss_share_msg = Decimal("0.00")
         if "Anexo IV" in categoria_simples:
             if rbt12 <= Decimal("180000.00"):
-                iss_share = Decimal("0.4450")
+                iss_share_msg = Decimal("0.4450")
             else:
-                iss_share = Decimal("0.4000")
+                iss_share_msg = Decimal("0.4000")
         elif "Anexo V" in categoria_simples:
             if rbt12 <= Decimal("180000.00"):
-                iss_share = Decimal("0.1400")
+                iss_share_msg = Decimal("0.1400")
             elif rbt12 <= Decimal("360000.00"):
-                iss_share = Decimal("0.1700")
+                iss_share_msg = Decimal("0.1700")
             elif rbt12 <= Decimal("720000.00"):
-                iss_share = Decimal("0.1835")
+                iss_share_msg = Decimal("0.1835")
             elif rbt12 <= Decimal("1800000.00"):
-                iss_share = Decimal("0.1835")
+                iss_share_msg = Decimal("0.1835")
             elif rbt12 <= Decimal("3600000.00"):
-                iss_share = Decimal("0.1885")
+                iss_share_msg = Decimal("0.1885")
             else:
-                iss_share = Decimal("0.2333")
-        elif "Serviços" in categoria_simples:
+                iss_share_msg = Decimal("0.2333")
+        elif "Serviços" in categoria_simples or "Anexo III" in categoria_simples:
             if rbt12 <= Decimal("180000.00"):
-                iss_share = Decimal("0.3350")
+                iss_share_msg = Decimal("0.3350")
             elif rbt12 <= Decimal("360000.00"):
-                iss_share = Decimal("0.3200")
+                iss_share_msg = Decimal("0.3200")
             elif rbt12 <= Decimal("720000.00"):
-                iss_share = Decimal("0.3250")
+                iss_share_msg = Decimal("0.3250")
             elif rbt12 <= Decimal("1800000.00"):
-                iss_share = Decimal("0.3250")
+                iss_share_msg = Decimal("0.3250")
             elif rbt12 <= Decimal("3600000.00"):
-                iss_share = Decimal("0.3350")
+                iss_share_msg = Decimal("0.3350")
             else:
-                iss_share = Decimal("0.00")
+                iss_share_msg = Decimal("0.00")
 
-        # Identifica faturamento com ISS Retido nos itens
-        valor_com_iss_retido = Decimal("0.00")
-        if documento.itens:
-            for item in documento.itens:
-                impostos = item.get("impostos", {})
-                iss = impostos.get("iss", {})
-                if iss.get("retido"):
-                    it_val = Decimal(str(item.get("valor_total", 0.0)))
-                    it_desc = Decimal(str(item.get("desconto", 0.0)))
-                    valor_com_iss_retido += (it_val - it_desc)
-
-        if valor_com_iss_retido > base_calculo:
-            valor_com_iss_retido = base_calculo
-        valor_sem_iss_retido = base_calculo - valor_com_iss_retido
-
-        # Cálculo segregado se houver ICMS-ST
-        imposto_sem_st = valor_sem_st * aliquota_aplicada
-        imposto_com_st = valor_com_st * aliquota_aplicada * (Decimal("1.0") - icms_share)
-        imposto_das_produtos = imposto_sem_st + imposto_com_st
-
-        # Cálculo segregado se houver ISS Retido
-        imposto_sem_iss = valor_sem_iss_retido * aliquota_aplicada
-        imposto_com_iss = valor_com_iss_retido * aliquota_aplicada * (Decimal("1.0") - iss_share)
-        imposto_das_servicos = imposto_sem_iss + imposto_com_iss
-
-        # Escolhe o imposto apropriado conforme categoria
-        if categoria_simples in ("Comércio (Anexo I)", "Indústria (Anexo II)"):
-            imposto_das = imposto_das_produtos
-        else:
-            imposto_das = imposto_das_servicos
+        ipi_share_msg = Decimal("0.0750") if categoria_simples == "Indústria (Anexo II)" else Decimal("0.00")
 
         if valor_com_st > 0:
-            if icms_share > 0:
-                economia = valor_com_st * aliquota_aplicada * icms_share
-                mensagem += f" [ST SEGREGADO] R$ {valor_com_st:,.2f} segregados no Simples Nacional com dedução de {(icms_share * 100):.2f}% de ICMS (Economia de R$ {economia:,.2f}!)."
+            if icms_share_msg > 0:
+                economia = valor_com_st * aliquota_padrao * icms_share_msg
+                mensagem += f" [ST SEGREGADO] R$ {valor_com_st:,.2f} segregados no Simples Nacional com dedução de {(icms_share_msg * 100):.2f}% de ICMS (Economia de R$ {economia:,.2f}!)."
             else:
                 mensagem += f" [ST DETECTADO] R$ {valor_com_st:,.2f} em itens com Substituição Tributária de ICMS. Esse valor pode ser segregado no PGDAS-D para dedução e economia fiscal do ICMS!"
 
         if valor_com_iss_retido > 0:
-            if iss_share > 0:
-                economia_iss = valor_com_iss_retido * aliquota_aplicada * iss_share
-                mensagem += f" [ISS RETIDO] R$ {valor_com_iss_retido:,.2f} com ISS retido na fonte. Dedução de {(iss_share * 100):.2f}% de ISS da guia DAS (Desconto de R$ {economia_iss:,.2f} no imposto unificado)."
+            if iss_share_msg > 0:
+                economia_iss = valor_com_iss_retido * aliquota_padrao * iss_share_msg
+                mensagem += f" [ISS RETIDO] R$ {valor_com_iss_retido:,.2f} com ISS retido na fonte. Dedução de {(iss_share_msg * 100):.2f}% de ISS da guia DAS (Desconto de R$ {economia_iss:,.2f} no imposto unificado)."
 
-        # Calcula a memória de cálculo detalhada
+        aliquota_aplicada = aliquota_padrao
+        
+        # Calcula a memória de cálculo detalhada consolidada para compatibilidade com o relatório existente
         if aliquota is not None:
-            aliq_nom = aliquota_aplicada
+            aliq_nom = aliquota
             deducao = Decimal("0.00")
             fator_r = Decimal("0.00")
             enquadramento = "Customizado"
-            rbt12_val = Decimal("0.00")
-            folha12_val = Decimal("0.00")
-            sujeito_fator_r_val = False
         else:
-            rbt12_val = getattr(empresa, "rbt12", Decimal("0.00"))
-            folha12_val = getattr(empresa, "folha12", Decimal("0.00"))
-            sujeito_fator_r_val = getattr(empresa, "sujeito_fator_r", False)
-            if "Anexo V" in categoria_simples:
-                sujeito_fator_r_val = True
-            detalhes_calc = obter_aliquota_efetiva_sn(rbt12_val, folha12_val, sujeito_fator_r_val, categoria_simples, retornar_detalhes=True)
+            detalhes_calc = obter_aliquota_efetiva_sn(rbt12, folha12, sujeito_fator_r, categoria_simples, retornar_detalhes=True)
             aliq_nom = detalhes_calc["aliq_nom"]
             deducao = detalhes_calc["deducao"]
             fator_r = detalhes_calc["fator_r"]
             enquadramento = detalhes_calc["enquadramento"]
 
         memoria_calculo = {
-            "rbt12": rbt12_val.quantize(Decimal("0.01")),
-            "folha12": folha12_val.quantize(Decimal("0.01")),
+            "rbt12": rbt12.quantize(Decimal("0.01")),
+            "folha12": folha12.quantize(Decimal("0.01")),
             "fator_r": (fator_r * Decimal("100.0")).quantize(Decimal("0.01")),
-            "sujeito_fator_r": sujeito_fator_r_val,
+            "sujeito_fator_r": sujeito_fator_r,
             "categoria_simples": categoria_simples,
             "enquadramento": enquadramento,
             "aliq_nom": (aliq_nom * Decimal("100.0")).quantize(Decimal("0.0001")),
             "deducao": deducao.quantize(Decimal("0.01")),
             "aliq_efetiva": (aliquota_aplicada * Decimal("100.0")).quantize(Decimal("0.0001")),
-            "iss_share": (iss_share * Decimal("100.0")).quantize(Decimal("0.01")),
-            "icms_share": (icms_share * Decimal("100.0")).quantize(Decimal("0.01")),
-            "ipi_share": (ipi_share * Decimal("100.0")).quantize(Decimal("0.01")),
+            "iss_share": (iss_share_msg * Decimal("100.0")).quantize(Decimal("0.01")),
+            "icms_share": (icms_share_msg * Decimal("100.0")).quantize(Decimal("0.01")),
+            "ipi_share": (ipi_share_msg * Decimal("100.0")).quantize(Decimal("0.01")) if isinstance(ipi_share_msg, Decimal) else ipi_share_msg,
             "valor_com_iss_retido": valor_com_iss_retido.quantize(Decimal("0.01")),
             "valor_com_st": valor_com_st.quantize(Decimal("0.01")),
             "valor_sem_iss_retido": valor_sem_iss_retido.quantize(Decimal("0.01")),
-            "valor_sem_st": valor_sem_st.quantize(Decimal("0.01"))
+            "valor_sem_st": valor_sem_st.quantize(Decimal("0.01")),
+            "itens_calculados": [
+                {
+                    **it,
+                    "aliquota_efetiva": (it["aliquota_efetiva"] * Decimal("100.0")).quantize(Decimal("0.0001")),
+                    "valor_total": it["valor_total"].quantize(Decimal("0.01")),
+                    "valor_liquido": it["valor_liquido"].quantize(Decimal("0.01")),
+                    "imposto_calculado": it["imposto_calculado"].quantize(Decimal("0.01"))
+                } for it in itens_calculados
+            ]
         }
 
 
@@ -571,9 +755,9 @@ class CalculadoraSimplesNacional(CalculadoraInterface):
             "valor_com_st": valor_com_st.quantize(Decimal("0.01")),
             "valor_sem_st": valor_sem_st.quantize(Decimal("0.01")),
             "aliquota_aplicada": aliquota_aplicada.quantize(Decimal("0.000001")),
-            "imposto_calculado": imposto_das.quantize(Decimal("0.01")),
+            "imposto_calculado": total_imposto.quantize(Decimal("0.01")),
             "detalhes": {
-                "das": imposto_das.quantize(Decimal("0.01"))
+                "das": total_imposto.quantize(Decimal("0.01"))
             },
             "mensagem": mensagem,
             "memoria_calculo": memoria_calculo
@@ -659,7 +843,26 @@ class CalculadoraLucroPresumido(CalculadoraInterface):
                 "memoria_calculo": memoria_calculo
             }
 
-        base_calculo = documento.valor_final
+        # O cálculo baseia-se no valor final (filtrando itens de remessa/comodato/devolução)
+        base_calculo = Decimal("0.00")
+        if documento.itens:
+            for item in documento.itens:
+                cfop = str(item.get("cfop", ""))
+                # Se for CFOP de remessa, retorno, comodato ou devolução de saída, desconsidera do faturamento
+                if cfop and cfop.startswith(("59", "69", "79", "52", "62", "72")):
+                    continue
+                it_val = Decimal(str(item.get("valor_total", 0.0)))
+                it_desc = Decimal(str(item.get("desconto", 0.0)))
+                it_frete = Decimal(str(item.get("frete", 0.0)))
+                it_ipi = Decimal(str(item.get("valor_ipi", 0.0)))
+                base_calculo += (it_val - it_desc + it_frete + it_ipi)
+            # Adiciona ajustes manuais registrados na Staging Area
+            ajustes_sum = documento.valor_final - documento.valor_total
+            base_calculo += ajustes_sum
+            if base_calculo < 0:
+                base_calculo = Decimal("0.00")
+        else:
+            base_calculo = documento.valor_final
 
         # Alíquotas federais de Lucro Presumido para prestação de serviços gerais
         aliquota_pis = Decimal("0.0065")

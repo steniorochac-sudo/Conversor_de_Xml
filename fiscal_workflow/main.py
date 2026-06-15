@@ -361,80 +361,109 @@ async def upload_xml(
                 documentos_salvos.append(doc_existente)
                 continue
 
-            # 3. Resolução da Empresa Dona da Nota (Parâmetro Explicito ou Emitente para Saída, Destinatário para Entrada)
+            # 3. Resolução da Empresa Dona da Nota (Parâmetro Explicito ou autodetecção por CNPJ cadastrado)
             tipo_operacao = tipo_operacao_forcada or dados_nota.get("tipo_operacao", "Saída")
-            is_entrada = tipo_operacao == "Entrada"
             
+            empresa = None
             if empresa_id:
-                empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
-                if not empresa:
+                emp_candidate = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+                if not emp_candidate:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail=f"Empresa com ID {empresa_id} especificada no formulário não encontrada."
                     )
-            else:
-                cnpj_empresa = dados_nota.get("destinatario_cnpj") if is_entrada else dados_nota.get("emitente_cnpj")
-                if not cnpj_empresa:
-                    cnpj_empresa = dados_nota.get("emitente_cnpj") or dados_nota.get("destinatario_cnpj")
-                    
-                if not cnpj_empresa:
-                    continue # Pula se o XML não tiver dados identificáveis da empresa
-                    
-                empresa = db.query(Empresa).filter(Empresa.cnpj == cnpj_empresa).first()
-                
-                # Se a empresa não existir, autocadastra
-                if not empresa:
-                    crt = dados_nota.get("emitente_crt") if not is_entrada else "1"
-                    if crt in ("1", "2"):
-                        regime = RegimeTributario.SIMPLES_NACIONAL
-                    elif crt == "3":
-                        regime = RegimeTributario.LUCRO_PRESUMIDO
+                if tipo_operacao_forcada:
+                    empresa = emp_candidate
+                else:
+                    if emp_candidate.cnpj == dados_nota.get("destinatario_cnpj"):
+                        empresa = emp_candidate
+                        tipo_operacao = "Entrada"
+                    elif emp_candidate.cnpj == dados_nota.get("emitente_cnpj"):
+                        empresa = emp_candidate
+                        tipo_operacao = "Saída"
                     else:
-                        regime = RegimeTributario.SIMPLES_NACIONAL
+                        empresa = None
 
-                    from fiscal_workflow.services.cnpj_client import buscar_cnae_oficial
-                    cnae_resolvido = buscar_cnae_oficial(cnpj_empresa)
+            if not empresa:
+                # 1. Se o destinatário for uma empresa cadastrada, é Entrada
+                dest_cnpj = dados_nota.get("destinatario_cnpj")
+                if dest_cnpj:
+                    empresa = db.query(Empresa).filter(Empresa.cnpj == dest_cnpj).first()
+                    if empresa:
+                        tipo_operacao = "Entrada"
+                
+                # 2. Se não encontrou e o emitente for uma empresa cadastrada, é Saída
+                if not empresa:
+                    emit_cnpj = dados_nota.get("emitente_cnpj")
+                    if emit_cnpj:
+                        empresa = db.query(Empresa).filter(Empresa.cnpj == emit_cnpj).first()
+                        if empresa:
+                            tipo_operacao = "Saída"
+                
+                # 3. Se não for nenhuma empresa cadastrada, autocadastra
+                if not empresa:
+                    is_entrada = tipo_operacao == "Entrada"
+                    cnpj_empresa = dados_nota.get("destinatario_cnpj") if is_entrada else dados_nota.get("emitente_cnpj")
+                    if not cnpj_empresa:
+                        cnpj_empresa = dados_nota.get("emitente_cnpj") or dados_nota.get("destinatario_cnpj")
+                        
+                    if not cnpj_empresa:
+                        continue # Pula se o XML não tiver dados identificáveis da empresa
+                        
+                    empresa = db.query(Empresa).filter(Empresa.cnpj == cnpj_empresa).first()
                     
-                    sujeito_fator_r = False
-                    categoria_simples = "Serviços (Anexo III)"
-                    
-                    if cnae_resolvido:
-                        try:
-                            if CNAE_JSON_PATH.exists():
-                                with open(CNAE_JSON_PATH, "r", encoding="utf-8") as f:
-                                    regras_locais = json.load(f)
-                                if cnae_resolvido in regras_locais:
-                                    regra = regras_locais[cnae_resolvido]
-                                    sujeito_fator_r = regra.get("fator_r", False)
-                                    if regra.get("anexo") == "I":
-                                        categoria_simples = "Comércio (Anexo I)"
+                    if not empresa:
+                        crt = dados_nota.get("emitente_crt") if not is_entrada else "1"
+                        if crt in ("1", "2"):
+                            regime = RegimeTributario.SIMPLES_NACIONAL
+                        elif crt == "3":
+                            regime = RegimeTributario.LUCRO_PRESUMIDO
+                        else:
+                            regime = RegimeTributario.SIMPLES_NACIONAL
+
+                        from fiscal_workflow.services.cnpj_client import buscar_cnae_oficial
+                        cnae_resolvido = buscar_cnae_oficial(cnpj_empresa)
+                        
+                        sujeito_fator_r = False
+                        categoria_simples = "Serviços (Anexo III)"
+                        
+                        if cnae_resolvido:
+                            try:
+                                if CNAE_JSON_PATH.exists():
+                                    with open(CNAE_JSON_PATH, "r", encoding="utf-8") as f:
+                                        regras_locais = json.load(f)
+                                    if cnae_resolvido in regras_locais:
+                                        regra = regras_locais[cnae_resolvido]
+                                        sujeito_fator_r = regra.get("fator_r", False)
+                                        if regra.get("anexo") == "I":
+                                            categoria_simples = "Comércio (Anexo I)"
+                                        else:
+                                            categoria_simples = "Serviços (Anexo III)"
                                     else:
-                                        categoria_simples = "Serviços (Anexo III)"
-                                else:
-                                    if cnae_resolvido[:2] in ("45", "46", "47"):
-                                        categoria_simples = "Comércio (Anexo I)"
-                                    elif cnae_resolvido[:2] in ("62", "86", "73", "74", "69"):
-                                        sujeito_fator_r = True
-                        except Exception:
-                            pass
+                                        if cnae_resolvido[:2] in ("45", "46", "47"):
+                                            categoria_simples = "Comércio (Anexo I)"
+                                        elif cnae_resolvido[:2] in ("62", "86", "73", "74", "69"):
+                                            sujeito_fator_r = True
+                            except Exception:
+                                pass
 
-                    razao_social = (dados_nota.get("destinatario_nome") if is_entrada else dados_nota.get("emitente_razao_social")) or f"Empresa CNPJ {cnpj_empresa}"
-                    uf_empresa = (dados_nota.get("destinatario_uf") if is_entrada else "BA") or "BA"
+                        razao_social = (dados_nota.get("destinatario_nome") if is_entrada else dados_nota.get("emitente_razao_social")) or f"Empresa CNPJ {cnpj_empresa}"
+                        uf_empresa = (dados_nota.get("destinatario_uf") if is_entrada else "BA") or "BA"
 
-                    empresa = Empresa(
-                        cnpj=cnpj_empresa,
-                        razao_social=razao_social,
-                        regime_tributario=regime,
-                        rbt12=Decimal("0.00"),
-                        folha12=Decimal("0.00"),
-                        sujeito_fator_r=sujeito_fator_r,
-                        categoria_simples=categoria_simples,
-                        cnae=cnae_resolvido,
-                        uf=uf_empresa
-                    )
-                    db.add(empresa)
-                    db.commit()
-                    db.refresh(empresa)
+                        empresa = Empresa(
+                            cnpj=cnpj_empresa,
+                            razao_social=razao_social,
+                            regime_tributario=regime,
+                            rbt12=Decimal("0.00"),
+                            folha12=Decimal("0.00"),
+                            sujeito_fator_r=sujeito_fator_r,
+                            categoria_simples=categoria_simples,
+                            cnae=cnae_resolvido,
+                            uf=uf_empresa
+                        )
+                        db.add(empresa)
+                        db.commit()
+                        db.refresh(empresa)
 
             # 4. Salva a nota fiscal na Staging Area
             dt_emissao = None

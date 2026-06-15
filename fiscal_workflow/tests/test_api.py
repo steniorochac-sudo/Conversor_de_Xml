@@ -228,10 +228,10 @@ class TestFiscalAPI(unittest.TestCase):
 
         # Faturamento total: 4350.00 * 2 = 8700.00
         self.assertEqual(float(data["total_faturamento"]), 8700.00)
-        # Imposto calculado (Simples Nacional 6%): 8700.00 * 0.06 = 522.00
-        self.assertEqual(float(data["total_imposto"]), 522.00)
-        self.assertEqual(float(data["aliquota_efetiva_consolidada"]), 0.06)
-        self.assertEqual(float(data["detalhes"]["das"]), 522.00)
+        # Imposto calculado (Simples Nacional 4%): 8700.00 * 0.04 = 348.00
+        self.assertEqual(float(data["total_imposto"]), 348.00)
+        self.assertEqual(float(data["aliquota_efetiva_consolidada"]), 0.04)
+        self.assertEqual(float(data["detalhes"]["das"]), 348.00)
         
         # Valida a presença e chaves da memoria_calculo
         self.assertIn("memoria_calculo", data)
@@ -674,7 +674,7 @@ class TestFiscalAPI(unittest.TestCase):
         # Dados de compras devem estar preenchidos
         compras = res_data["compras"]
         self.assertEqual(float(compras["total_compras"]), 1000.00)
-        # DIFAL: 1000 * Base Dupla (BA) sem destaque ICMS origem = 257.86
+        # DIFAL (BA usa base dupla): 257.86
         self.assertEqual(float(compras["total_difal"]), 257.86)
         self.assertEqual(float(compras["total_icms_st"]), 80.00)
         self.assertEqual(compras["quantidade_entradas"], 1)
@@ -763,6 +763,45 @@ class TestFiscalAPI(unittest.TestCase):
         
         # A data de emissão deve ter sido forçada para a competência indicada (2026-05-01)
         self.assertTrue(doc_data["data_emissao"].startswith("2026-05-01"))
+
+    def test_upload_entrada_autodetect_empresa_cadastrada(self):
+        """Testa que se a empresa destinatária está cadastrada, a nota é associada como Entrada sem duplicar ou cadastrar fornecedor."""
+        # 1. Cadastra a empresa que será a destinatária (com o CNPJ destinatário do MOCK_NFE_XML: 98765432000188)
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "98765432000188",
+                "razao_social": "Cliente Exemplo SA (Nossa Empresa)",
+                "regime_tributario": "Simples Nacional",
+                "uf": "BA"
+            }
+        )
+        self.assertEqual(response_empresa.status_code, 201)
+        emp_id = response_empresa.json()["id"]
+
+        # 2. Upload da nota de compra (emitente = 12345678000199, destinatario = 98765432000188)
+        xml_file = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe_compra.xml", xml_file, "text/xml"))]
+        )
+        self.assertEqual(response_upload.status_code, 201)
+        doc_list = response_upload.json()
+        self.assertEqual(len(doc_list), 1)
+        doc_data = doc_list[0]
+
+        # O documento deve ter sido associado a Cliente Exemplo SA (ID emp_id) e tipo_operacao = Entrada
+        self.assertEqual(doc_data["empresa_id"], emp_id)
+        self.assertEqual(doc_data["tipo_operacao"], "Entrada")
+
+        # Garante que o fornecedor/emitente (12345678000199) não foi cadastrado como empresa ativa no banco
+        response_empresas = self.client.get("/empresas")
+        self.assertEqual(response_empresas.status_code, 200)
+        empresas = response_empresas.json()
+        
+        # Só deve existir uma empresa cadastrada (a que criamos manualmente)
+        self.assertEqual(len(empresas), 1)
+        self.assertEqual(empresas[0]["cnpj"], "98765432000188")
 
 if __name__ == "__main__":
     unittest.main()
