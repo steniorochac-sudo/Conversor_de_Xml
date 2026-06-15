@@ -803,5 +803,48 @@ class TestFiscalAPI(unittest.TestCase):
         self.assertEqual(len(empresas), 1)
         self.assertEqual(empresas[0]["cnpj"], "98765432000188")
 
+    def test_xml_storage_hierarchy(self):
+        """Testa se o XML importado é salvo corretamente na hierarquia de pastas proposta."""
+        import shutil
+        from pathlib import Path
+        
+        # 1. Limpa qualquer armazenamento de teste prévio
+        test_storage = Path("armazenamento_xml")
+        shutil.rmtree(test_storage, ignore_errors=True)
+        
+        # 2. Cadastra uma empresa emitente com caracteres inválidos no nome
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio/Software\\Tech:Ltda", # Caracteres inválidos / \ :
+                "regime_tributario": "Simples Nacional",
+                "uf": "BA"
+            }
+        )
+        self.assertEqual(response_empresa.status_code, 201)
+        
+        # 3. Upload do XML mockado
+        xml_file = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe_venda.xml", xml_file, "text/xml"))]
+        )
+        self.assertEqual(response_upload.status_code, 201)
+        
+        # 4. Verifica se o caminho esperado foi gerado corretamente
+        # Razão social saneada: "Stenio_Software_Tech_Ltda"
+        expected_path = test_storage / "Stenio_Software_Tech_Ltda" / "202305" / "Saídas" / "NFe" / "35230512345678000199550010000001231234567890.xml"
+        
+        self.assertTrue(expected_path.exists(), f"Caminho esperado não foi criado: {expected_path}")
+        
+        # 5. Valida o conteúdo salvo
+        with open(expected_path, "r", encoding="utf-8") as f:
+            saved_content = f.read()
+        self.assertEqual(saved_content, MOCK_NFE_XML)
+        
+        # Limpa o diretório de teste
+        shutil.rmtree(test_storage, ignore_errors=True)
+
 if __name__ == "__main__":
     unittest.main()

@@ -141,6 +141,51 @@ class HeartbeatManager:
 
 heartbeat_manager = HeartbeatManager()
 
+def salvar_copia_xml(
+    xml_content: bytes,
+    empresa_nome: str,
+    data_emissao: Optional[datetime],
+    tipo_operacao: str,
+    tipo_documento: str,
+    chave_acesso: str
+):
+    """
+    Salva uma cópia do arquivo XML de forma organizada na pasta raiz:
+    armazenamento_xml / [Razão Social] / [YYYYMM] / [Entradas/Saídas] / [NFe/NFSe] / [Chave].xml
+    """
+    import re
+    from pathlib import Path
+    try:
+        # 1. Saneamento do nome da empresa
+        empresa_saneada = re.sub(r'[\/\\\:\*\?\"\<\>\|]', '_', empresa_nome).strip()
+        if not empresa_saneada:
+            empresa_saneada = "Empresa_Nao_Identificada"
+
+        # 2. Período YYYYMM
+        if data_emissao:
+            periodo = data_emissao.strftime("%Y%m")
+        else:
+            periodo = datetime.now().strftime("%Y%m")
+
+        # 3. Movimento
+        movimento = "Entradas" if tipo_operacao == "Entrada" else "Saídas"
+
+        # 4. Tipo de documento
+        tipo_doc_limpo = "NFSe" if "nfs" in tipo_documento.lower() else "NFe"
+
+        # 5. Caminho final
+        base_dir = Path("armazenamento_xml")
+        target_dir = base_dir / empresa_saneada / periodo / movimento / tipo_doc_limpo
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        target_file = target_dir / f"{chave_acesso}.xml"
+        with open(target_file, "wb") as f:
+            f.write(xml_content)
+            
+        app_logger.info(f"Cópia do XML salva com sucesso em: {target_file}")
+    except Exception as e:
+        app_logger.error(f"Erro ao salvar cópia do XML para chave {chave_acesso}: {str(e)}")
+
 app = FastAPI(
     title="Workflow Modular Fiscal",
     description="API de ingestão de XMLs, Staging Area e motor de apuração fiscal",
@@ -358,6 +403,17 @@ async def upload_xml(
                 if dados_atualizados:
                     db.commit()
                     db.refresh(doc_existente)
+                
+                # Salva uma cópia estruturada do arquivo XML importado
+                salvar_copia_xml(
+                    xml_content=xml_content,
+                    empresa_nome=doc_existente.empresa.razao_social,
+                    data_emissao=doc_existente.data_emissao,
+                    tipo_operacao=doc_existente.tipo_operacao,
+                    tipo_documento=doc_existente.tipo_documento,
+                    chave_acesso=doc_existente.chave_acesso
+                )
+                
                 documentos_salvos.append(doc_existente)
                 continue
 
@@ -500,6 +556,17 @@ async def upload_xml(
             db.add(novo_doc)
             db.commit()
             db.refresh(novo_doc)
+            
+            # Salva uma cópia estruturada do arquivo XML importado
+            salvar_copia_xml(
+                xml_content=xml_content,
+                empresa_nome=empresa.razao_social,
+                data_emissao=dt_emissao,
+                tipo_operacao=tipo_operacao,
+                tipo_documento=dados_nota["tipo_documento"],
+                chave_acesso=dados_nota["chave_acesso"]
+            )
+            
             documentos_salvos.append(novo_doc)
 
     return documentos_salvos

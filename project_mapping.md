@@ -18,6 +18,7 @@ A aplicação é um **ecossistema de processamento e apuração de documentos fi
    - Fornece uma **Staging Area** (Área de Preparação) onde notas fiscais são importadas e podem ser editadas, auditadas e ter ajustes manuais registrados de forma rastreável.
    - Roda um Motor de Cálculo Dinâmico (Strategy Pattern) para simulação e apuração de tributos sob diferentes regimes (Simples Nacional - Anexos I, II [Indústria], III, IV e V [Fator R]; e Lucro Presumido - Prestação de Serviços).
    - Apresenta um **Painel de Controle Visual (Dashboard)** interativo e moderno incorporado diretamente no backend, contendo um visualizador de terminal de logs em tempo real integrado.
+   - **Armazenamento e Arquivamento de XMLs**: Ao realizar a importação de notas fiscais, o sistema copia e organiza automaticamente os arquivos XML fisicamente na pasta raiz `armazenamento_xml/` seguindo a estrutura `Empresa/Periodo (YYYYMM)/Movimento (Entradas ou Saídas)/Tipo (NFe ou NFSe)`.
 
 ---
 
@@ -35,6 +36,7 @@ Conversor_de_Xml_Nfe/
 ├── Iniciar_Workflow_Fiscal_Silencioso.vbs # VBScript para inicializar o servidor de forma oculta/silenciosa
 ├── Instruções para gerar o exe...   # Guia técnico para compilar o script Desktop em .exe usando PyInstaller
 ├── LEIAME                           # Manual rápido de receitas para inclusão de novos campos no Access/Python
+├── armazenamento_xml/               # Repositório automático de cópias dos XMLs (Empresa/Periodo/Movimento/Tipo)
 ├── extrator_mva.py                  # Script de raspagem (scraping) de PDFs de MVA da SEFAZ-BA
 ├── importador_nfe.py                # Interface GUI e motor de carga de XML no banco Access
 ├── importador_nfe.spec              # Configuração de build do PyInstaller para o executável Desktop
