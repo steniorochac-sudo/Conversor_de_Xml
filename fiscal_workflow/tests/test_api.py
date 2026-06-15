@@ -674,8 +674,8 @@ class TestFiscalAPI(unittest.TestCase):
         # Dados de compras devem estar preenchidos
         compras = res_data["compras"]
         self.assertEqual(float(compras["total_compras"]), 1000.00)
-        # DIFAL: 1000 * (20.5% - 7%) = 135.00
-        self.assertEqual(float(compras["total_difal"]), 135.00)
+        # DIFAL: 1000 * Base Dupla (BA) sem destaque ICMS origem = 257.86
+        self.assertEqual(float(compras["total_difal"]), 257.86)
         self.assertEqual(float(compras["total_icms_st"]), 80.00)
         self.assertEqual(compras["quantidade_entradas"], 1)
 
