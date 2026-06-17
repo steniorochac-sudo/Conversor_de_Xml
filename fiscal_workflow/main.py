@@ -92,6 +92,11 @@ with engine.connect() as conn:
         pass
     try:
         with conn.begin():
+            conn.execute(text("ALTER TABLE documentos_fiscais ADD COLUMN data_competencia TIMESTAMP"))
+    except Exception:
+        pass
+    try:
+        with conn.begin():
             conn.execute(text("ALTER TABLE empresas ADD COLUMN uf VARCHAR(2) DEFAULT 'BA'"))
     except Exception:
         pass
@@ -143,20 +148,20 @@ heartbeat_manager = HeartbeatManager()
 
 def obter_caminho_copia_xml(
     empresa_nome: str,
-    data_emissao: Optional[datetime],
+    data_competencia: Optional[datetime],
     tipo_operacao: str,
     tipo_documento: str,
     chave_acesso: str
 ):
-    """Calcula o caminho estruturado onde o XML da nota fiscal deve ser armazenado."""
+    """Calcula o caminho estruturado onde o XML da nota fiscal deve ser armazenado com base na competência."""
     import re
     from pathlib import Path
     empresa_saneada = re.sub(r'[\/\\\:\*\?\"\<\>\|]', '_', empresa_nome).strip()
     if not empresa_saneada:
         empresa_saneada = "Empresa_Nao_Identificada"
 
-    if data_emissao:
-        periodo = data_emissao.strftime("%Y%m")
+    if data_competencia:
+        periodo = data_competencia.strftime("%Y%m")
     else:
         periodo = datetime.now().strftime("%Y%m")
 
@@ -168,7 +173,7 @@ def obter_caminho_copia_xml(
 def salvar_copia_xml(
     xml_content: bytes,
     empresa_nome: str,
-    data_emissao: Optional[datetime],
+    data_competencia: Optional[datetime],
     tipo_operacao: str,
     tipo_documento: str,
     chave_acesso: str
@@ -177,7 +182,7 @@ def salvar_copia_xml(
     Salva uma cópia do arquivo XML de forma organizada na pasta raiz.
     """
     try:
-        target_file = obter_caminho_copia_xml(empresa_nome, data_emissao, tipo_operacao, tipo_documento, chave_acesso)
+        target_file = obter_caminho_copia_xml(empresa_nome, data_competencia, tipo_operacao, tipo_documento, chave_acesso)
         target_file.parent.mkdir(parents=True, exist_ok=True)
         with open(target_file, "wb") as f:
             f.write(xml_content)
@@ -187,19 +192,19 @@ def salvar_copia_xml(
 
 def sincronizar_arquivo_xml(
     empresa_nome: str,
-    data_emissao_antiga: Optional[datetime],
-    data_emissao_nova: Optional[datetime],
+    data_competencia_antiga: Optional[datetime],
+    data_competencia_nova: Optional[datetime],
     tipo_operacao: str,
     tipo_documento: str,
     chave_acesso: str
 ):
     """
-    Move o arquivo XML físico da pasta antiga para a nova pasta se houver mudança de período.
+    Move o arquivo XML físico da pasta antiga para a nova pasta se houver mudança de período de competência.
     Limpa diretórios vazios remanescentes.
     """
     try:
-        old_file = obter_caminho_copia_xml(empresa_nome, data_emissao_antiga, tipo_operacao, tipo_documento, chave_acesso)
-        new_file = obter_caminho_copia_xml(empresa_nome, data_emissao_nova, tipo_operacao, tipo_documento, chave_acesso)
+        old_file = obter_caminho_copia_xml(empresa_nome, data_competencia_antiga, tipo_operacao, tipo_documento, chave_acesso)
+        new_file = obter_caminho_copia_xml(empresa_nome, data_competencia_nova, tipo_operacao, tipo_documento, chave_acesso)
         
         if old_file != new_file and old_file.exists():
             new_file.parent.mkdir(parents=True, exist_ok=True)
@@ -299,6 +304,11 @@ def startup_backfill():
                     atualizado = True
                 else:
                     doc.destinatario_nome = "Cliente Não Informado"
+                    atualizado = True
+                    
+            if not doc.data_competencia:
+                if doc.data_emissao:
+                    doc.data_competencia = datetime(doc.data_emissao.year, doc.data_emissao.month, 1)
                     atualizado = True
                     
             if atualizado:
@@ -443,6 +453,14 @@ async def upload_xml(
             continue
 
         for dados_nota in lista_notas:
+            # 1. Parse da data de emissão real do XML
+            real_data_emissao = None
+            if dados_nota.get("data_emissao"):
+                try:
+                    real_data_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
+                except Exception:
+                    pass
+
             # 2. Valida se a chave de acesso já foi importada
             doc_existente = db.query(DocumentoFiscal).filter(
                 DocumentoFiscal.chave_acesso == dados_nota["chave_acesso"]
@@ -452,44 +470,44 @@ async def upload_xml(
                 dados_atualizados = False
                 tipo_op_resolvido = doc_existente.tipo_operacao
                 
-                dt_emissao = None
+                # Resolve dt_competencia usando a hierarquia para o tipo resolvido
+                dt_competencia = None
+                if data_competencia:
+                    try:
+                        if len(data_competencia) == 10:
+                            dt_competencia = datetime.fromisoformat(data_competencia)
+                        elif len(data_competencia) == 7:
+                            dt_competencia = datetime.strptime(data_competencia, "%Y-%m")
+                        if dt_competencia:
+                            dt_competencia = datetime(dt_competencia.year, dt_competencia.month, 1)
+                    except Exception:
+                        pass
+                
                 if tipo_op_resolvido == "Entrada":
-                    # Hierarquia Entrada: 1° data_competencia, 2° caminho da pasta (file.filename), 3° emissão
-                    if data_competencia:
-                        try:
-                            if len(data_competencia) == 10:
-                                dt_emissao = datetime.fromisoformat(data_competencia)
-                            elif len(data_competencia) == 7:
-                                dt_emissao = datetime.strptime(data_competencia, "%Y-%m")
-                        except Exception:
-                            pass
-                    if not dt_emissao:
-                        dt_emissao = obter_periodo_do_caminho(file.filename)
-                    if not dt_emissao and dados_nota.get("data_emissao"):
-                        try:
-                            dt_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
-                        except Exception:
-                            pass
+                    if not dt_competencia:
+                        dt_competencia = obter_periodo_do_caminho(file.filename)
+                    if not dt_competencia and real_data_emissao:
+                        dt_competencia = datetime(real_data_emissao.year, real_data_emissao.month, 1)
                 else:
-                    # Hierarquia Saída: 1° data_competencia (se forçada), 2° emissão
-                    if data_competencia:
-                        try:
-                            if len(data_competencia) == 10:
-                                dt_emissao = datetime.fromisoformat(data_competencia)
-                            elif len(data_competencia) == 7:
-                                dt_emissao = datetime.strptime(data_competencia, "%Y-%m")
-                        except Exception:
-                            pass
-                    if not dt_emissao and dados_nota.get("data_emissao"):
-                        try:
-                            dt_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
-                        except Exception:
-                            pass
-
-                if dt_emissao and (doc_existente.data_emissao is None or data_competencia):
-                    if doc_existente.data_emissao != dt_emissao:
-                        doc_existente.data_emissao = dt_emissao
+                    if not dt_competencia and real_data_emissao:
+                        dt_competencia = datetime(real_data_emissao.year, real_data_emissao.month, 1)
+                
+                if not dt_competencia:
+                    hoje = datetime.now()
+                    dt_competencia = datetime(hoje.year, hoje.month, 1)
+                
+                data_competencia_antiga = doc_existente.data_competencia
+                
+                # Atualiza a competência se ela mudou ou se foi forçada
+                if dt_competencia and (doc_existente.data_competencia is None or data_competencia):
+                    if doc_existente.data_competencia != dt_competencia:
+                        doc_existente.data_competencia = dt_competencia
                         dados_atualizados = True
+                
+                # Atualiza a emissão real se ela for diferente ou nula no banco
+                if real_data_emissao and doc_existente.data_emissao != real_data_emissao:
+                    doc_existente.data_emissao = real_data_emissao
+                    dados_atualizados = True
                 
                 nova_cstat = dados_nota.get("cstat", "100")
                 if doc_existente.cstat != nova_cstat:
@@ -499,12 +517,22 @@ async def upload_xml(
                 if dados_atualizados:
                     db.commit()
                     db.refresh(doc_existente)
+                    # Sincroniza o arquivo físico de pasta caso a competência mude
+                    if data_competencia_antiga != dt_competencia:
+                        sincronizar_arquivo_xml(
+                            empresa_nome=doc_existente.empresa.razao_social,
+                            data_competencia_antiga=data_competencia_antiga,
+                            data_competencia_nova=dt_competencia,
+                            tipo_operacao=doc_existente.tipo_operacao,
+                            tipo_documento=doc_existente.tipo_documento,
+                            chave_acesso=doc_existente.chave_acesso
+                        )
                 
                 # Salva uma cópia estruturada do arquivo XML importado
                 salvar_copia_xml(
                     xml_content=dados_nota.get("xml_content", xml_content),
                     empresa_nome=doc_existente.empresa.razao_social,
-                    data_emissao=doc_existente.data_emissao,
+                    data_competencia=doc_existente.data_competencia,
                     tipo_operacao=doc_existente.tipo_operacao,
                     tipo_documento=doc_existente.tipo_documento,
                     chave_acesso=doc_existente.chave_acesso
@@ -603,54 +631,45 @@ async def upload_xml(
                         uf_empresa = (dados_nota.get("destinatario_uf") if is_entrada else "BA") or "BA"
 
                         empresa = Empresa(
-                            cnpj=cnpj_empresa,
-                            razao_social=razao_social,
-                            regime_tributario=regime,
-                            rbt12=Decimal("0.00"),
-                            folha12=Decimal("0.00"),
-                            sujeito_fator_r=sujeito_fator_r,
-                            categoria_simples=categoria_simples,
-                            cnae=cnae_resolvido,
-                            uf=uf_empresa
+                             cnpj=cnpj_empresa,
+                             razao_social=razao_social,
+                             regime_tributario=regime,
+                             rbt12=Decimal("0.00"),
+                             folha12=Decimal("0.00"),
+                             sujeito_fator_r=sujeito_fator_r,
+                             categoria_simples=categoria_simples,
+                             cnae=cnae_resolvido,
+                             uf=uf_empresa
                         )
                         db.add(empresa)
                         db.commit()
                         db.refresh(empresa)
 
             # 4. Salva a nota fiscal na Staging Area
-            dt_emissao = None
+            dt_competencia = None
+            if data_competencia:
+                try:
+                    if len(data_competencia) == 10:
+                        dt_competencia = datetime.fromisoformat(data_competencia)
+                    elif len(data_competencia) == 7:
+                        dt_competencia = datetime.strptime(data_competencia, "%Y-%m")
+                    if dt_competencia:
+                        dt_competencia = datetime(dt_competencia.year, dt_competencia.month, 1)
+                except Exception:
+                    pass
+
             if tipo_operacao == "Entrada":
-                # Hierarquia Entrada: 1° data_competencia, 2° caminho da pasta (file.filename), 3° emissão
-                if data_competencia:
-                    try:
-                        if len(data_competencia) == 10:
-                            dt_emissao = datetime.fromisoformat(data_competencia)
-                        elif len(data_competencia) == 7:
-                            dt_emissao = datetime.strptime(data_competencia, "%Y-%m")
-                    except Exception:
-                        pass
-                if not dt_emissao:
-                    dt_emissao = obter_periodo_do_caminho(file.filename)
-                if not dt_emissao and dados_nota.get("data_emissao"):
-                    try:
-                        dt_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
-                    except Exception:
-                        pass
+                if not dt_competencia:
+                    dt_competencia = obter_periodo_do_caminho(file.filename)
+                if not dt_competencia and real_data_emissao:
+                    dt_competencia = datetime(real_data_emissao.year, real_data_emissao.month, 1)
             else:
-                # Hierarquia Saída: 1° data_competencia (se forçada), 2° emissão
-                if data_competencia:
-                    try:
-                        if len(data_competencia) == 10:
-                            dt_emissao = datetime.fromisoformat(data_competencia)
-                        elif len(data_competencia) == 7:
-                            dt_emissao = datetime.strptime(data_competencia, "%Y-%m")
-                    except Exception:
-                        pass
-                if not dt_emissao and dados_nota.get("data_emissao"):
-                    try:
-                        dt_emissao = datetime.fromisoformat(dados_nota["data_emissao"])
-                    except Exception:
-                        pass
+                if not dt_competencia and real_data_emissao:
+                    dt_competencia = datetime(real_data_emissao.year, real_data_emissao.month, 1)
+
+            if not dt_competencia:
+                hoje = datetime.now()
+                dt_competencia = datetime(hoje.year, hoje.month, 1)
 
             novo_doc = DocumentoFiscal(
                 empresa_id=empresa.id,
@@ -661,7 +680,8 @@ async def upload_xml(
                 status_apuracao=StatusApuracao.PENDENTE,
                 cstat=dados_nota.get("cstat", "100"),
                 itens=dados_nota["itens"],
-                data_emissao=dt_emissao,
+                data_emissao=real_data_emissao,
+                data_competencia=dt_competencia,
                 numero_nf=dados_nota.get("numero_nf"),
                 emitente_nome=dados_nota.get("emitente_razao_social"),
                 destinatario_nome=dados_nota.get("destinatario_nome")
@@ -675,7 +695,7 @@ async def upload_xml(
             salvar_copia_xml(
                 xml_content=dados_nota.get("xml_content", xml_content),
                 empresa_nome=empresa.razao_social,
-                data_emissao=dt_emissao,
+                data_competencia=dt_competencia,
                 tipo_operacao=tipo_operacao,
                 tipo_documento=dados_nota["tipo_documento"],
                 chave_acesso=dados_nota["chave_acesso"]
@@ -703,9 +723,9 @@ def listar_documentos(
     if status:
         query = query.filter(DocumentoFiscal.status_apuracao == status)
     if mes:
-        query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
+        query = query.filter(extract('month', DocumentoFiscal.data_competencia) == mes)
     if ano:
-        query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
+        query = query.filter(extract('year', DocumentoFiscal.data_competencia) == ano)
     if tipo_operacao:
         query = query.filter(DocumentoFiscal.tipo_operacao == tipo_operacao)
     
@@ -842,9 +862,9 @@ def apurar_consolidado_empresa(
     from sqlalchemy import extract
     query = db.query(DocumentoFiscal).filter(DocumentoFiscal.empresa_id == empresa_id)
     if mes:
-        query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
+        query = query.filter(extract('month', DocumentoFiscal.data_competencia) == mes)
     if ano:
-        query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
+        query = query.filter(extract('year', DocumentoFiscal.data_competencia) == ano)
     documentos = query.all()
 
     # Separa os documentos por tipo de operação para apuração correta
@@ -1009,9 +1029,9 @@ def deletar_documentos_filtrados(
     from sqlalchemy import extract
     query = db.query(DocumentoFiscal).filter(DocumentoFiscal.empresa_id == empresa_id)
     if mes:
-        query = query.filter(extract('month', DocumentoFiscal.data_emissao) == mes)
+        query = query.filter(extract('month', DocumentoFiscal.data_competencia) == mes)
     if ano:
-        query = query.filter(extract('year', DocumentoFiscal.data_emissao) == ano)
+        query = query.filter(extract('year', DocumentoFiscal.data_competencia) == ano)
     
     docs_to_delete = query.all()
     count = len(docs_to_delete)
@@ -1083,6 +1103,8 @@ def editar_competencia_documentos_lote(
             dt = datetime.strptime(nova_competencia, "%Y-%m")
         else:
             raise ValueError()
+        if dt:
+            dt = datetime(dt.year, dt.month, 1)
     except Exception:
         raise HTTPException(status_code=400, detail="Formato de data inválido. Use YYYY-MM ou YYYY-MM-DD.")
         
@@ -1090,14 +1112,14 @@ def editar_competencia_documentos_lote(
     count = 0
     for doc in docs_to_update:
         if doc.status_apuracao != StatusApuracao.ENCERRADO:
-            data_emissao_antiga = doc.data_emissao
-            doc.data_emissao = dt
+            data_competencia_antiga = doc.data_competencia
+            doc.data_competencia = dt
             count += 1
             # Move o arquivo físico de pasta caso a competência mude
             sincronizar_arquivo_xml(
                 empresa_nome=doc.empresa.razao_social,
-                data_emissao_antiga=data_emissao_antiga,
-                data_emissao_nova=dt,
+                data_competencia_antiga=data_competencia_antiga,
+                data_competencia_nova=dt,
                 tipo_operacao=doc.tipo_operacao,
                 tipo_documento=doc.tipo_documento,
                 chave_acesso=doc.chave_acesso
@@ -1140,16 +1162,19 @@ def editar_competencia_documento(
         else:
             raise ValueError()
         
-        data_emissao_antiga = doc.data_emissao
-        doc.data_emissao = dt
+        if dt:
+            dt = datetime(dt.year, dt.month, 1)
+        
+        data_competencia_antiga = doc.data_competencia
+        doc.data_competencia = dt
         db.commit()
         db.refresh(doc)
         
         # Move o arquivo físico de pasta caso a competência mude
         sincronizar_arquivo_xml(
             empresa_nome=doc.empresa.razao_social,
-            data_emissao_antiga=data_emissao_antiga,
-            data_emissao_nova=dt,
+            data_competencia_antiga=data_competencia_antiga,
+            data_competencia_nova=dt,
             tipo_operacao=doc.tipo_operacao,
             tipo_documento=doc.tipo_documento,
             chave_acesso=doc.chave_acesso

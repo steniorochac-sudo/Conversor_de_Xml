@@ -1445,7 +1445,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                                     <button onclick="encerrarDocumento(${doc.id})" ${isEncerrado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Encerrar / Snapshot">
                                         <i class="fa-solid fa-lock"></i>
                                     </button>
-                                    <button onclick="abrirEditarCompetencia(${doc.id}, '${doc.data_emissao ? doc.data_emissao.substring(0, 10) : ''}')" ${isEncerrado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Editar Competência">
+                                    <button onclick="abrirEditarCompetencia(${doc.id}, '${doc.data_competencia ? doc.data_competencia.substring(0, 10) : ''}')" ${isEncerrado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Editar Competência">
                                         <i class="fa-solid fa-calendar-days"></i>
                                     </button>
                                     <button onclick="deletarDocumento(${doc.id}, '${doc.chave_acesso}')" class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition-colors" title="Excluir Nota Fiscal">

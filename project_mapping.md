@@ -143,6 +143,11 @@ erDiagram
         string status_apuracao
         json itens
         string cstat
+        datetime data_emissao
+        datetime data_competencia
+        string numero_nf
+        string emitente_nome
+        string destinatario_nome
     }
 
     AJUSTES_DOCUMENTOS {
@@ -161,6 +166,8 @@ erDiagram
 - **`DocumentoFiscal.valor_final`** (Propriedade Calculada): Retorna dinamicamente a soma matemática `valor_total + sum(ajustes.valor_total_ajuste)`.
 - **`DocumentoFiscal.status_apuracao`**: Armazena strings do enum `StatusApuracao` (`Pendente`, `Em Revisão`, `Encerrado`).
 - **`DocumentoFiscal.itens`**: Coluna do tipo **JSON** que armazena toda a árvore de produtos, quantidades, NCM e tags internas extraídas do XML pelo parser para viabilizar auditorias detalhadas e recálculos por alíquota sem necessidade do arquivo XML físico original.
+- **`DocumentoFiscal.data_emissao`**: Data e hora exatas de emissão extraídas do XML (dia/mês/ano original).
+- **`DocumentoFiscal.data_competencia`**: Data e hora representando o 1º dia do mês de competência fiscal do período apurado (usado para filtros de listagem, exclusão por período, cálculos consolidados de impostos e estrutura física de diretórios XML).
 
 ---
 

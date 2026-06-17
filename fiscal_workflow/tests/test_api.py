@@ -481,14 +481,16 @@ class TestFiscalAPI(unittest.TestCase):
             chave_acesso="35230512345678000199550010000001231234567891",
             tipo_documento="NF-e",
             valor_total=Decimal("1000.00"),
-            data_emissao=datetime(2026, 5, 15)
+            data_emissao=datetime(2026, 5, 15),
+            data_competencia=datetime(2026, 5, 1)
         )
         doc2 = DocumentoFiscal(
             empresa_id=emp_id,
             chave_acesso="35230512345678000199550010000001231234567892",
             tipo_documento="NF-e",
             valor_total=Decimal("2000.00"),
-            data_emissao=datetime(2026, 6, 20)
+            data_emissao=datetime(2026, 6, 20),
+            data_competencia=datetime(2026, 6, 1)
         )
         db.add(doc1)
         db.add(doc2)
@@ -543,14 +545,16 @@ class TestFiscalAPI(unittest.TestCase):
             chave_acesso="35230512345678000199550010000001231234567891",
             tipo_documento="NF-e",
             valor_total=Decimal("1000.00"),
-            data_emissao=datetime(2026, 5, 15)
+            data_emissao=datetime(2026, 5, 15),
+            data_competencia=datetime(2026, 5, 1)
         )
         doc2 = DocumentoFiscal(
             empresa_id=emp_id,
             chave_acesso="35230512345678000199550010000001231234567892",
             tipo_documento="NF-e",
             valor_total=Decimal("2000.00"),
-            data_emissao=datetime(2026, 6, 20)
+            data_emissao=datetime(2026, 6, 20),
+            data_competencia=datetime(2026, 6, 1)
         )
         db.add(doc1)
         db.add(doc2)
@@ -634,7 +638,8 @@ class TestFiscalAPI(unittest.TestCase):
             tipo_documento="NF-e",
             tipo_operacao="Saída",
             valor_total=Decimal("5000.00"),
-            data_emissao=datetime(2026, 5, 10)
+            data_emissao=datetime(2026, 5, 10),
+            data_competencia=datetime(2026, 5, 1)
         )
         doc_entrada = DocumentoFiscal(
             empresa_id=emp_id,
@@ -643,6 +648,7 @@ class TestFiscalAPI(unittest.TestCase):
             tipo_operacao="Entrada",
             valor_total=Decimal("1000.00"),
             data_emissao=datetime(2026, 5, 15),
+            data_competencia=datetime(2026, 5, 1),
             itens=[{
                 "sequencia": 1,
                 "codigo_produto": "PROD001",
@@ -762,8 +768,10 @@ class TestFiscalAPI(unittest.TestCase):
         self.assertEqual(doc_data["tipo_operacao"], "Entrada")
         self.assertEqual(doc_data["empresa_id"], emp_id)
         
-        # A data de emissão deve ter sido forçada para a competência indicada (2026-05-01)
-        self.assertTrue(doc_data["data_emissao"].startswith("2026-05-01"))
+        # A data de competência deve ter sido forçada para a competência indicada (2026-05-01)
+        self.assertTrue(doc_data["data_competencia"].startswith("2026-05-01"))
+        # A data de emissão deve conter a data real do XML (2023-05-15)
+        self.assertTrue(doc_data["data_emissao"].startswith("2023-05-15"))
 
     def test_upload_entrada_autodetect_empresa_cadastrada(self):
         """Testa que se a empresa destinatária está cadastrada, a nota é associada como Entrada sem duplicar ou cadastrar fornecedor."""
@@ -880,9 +888,10 @@ class TestFiscalAPI(unittest.TestCase):
         self.assertEqual(response_upload.status_code, 201)
         doc_data = response_upload.json()[0]
         
-        # Como é Entrada, deve priorizar a pasta sobre a data de emissão
+        # Como é Entrada, deve priorizar a pasta para definir a competência, mas manter a emissão real
         self.assertEqual(doc_data["tipo_operacao"], "Entrada")
-        self.assertTrue(doc_data["data_emissao"].startswith("2026-10-01"))
+        self.assertTrue(doc_data["data_competencia"].startswith("2026-10-01"))
+        self.assertTrue(doc_data["data_emissao"].startswith("2023-05-15"))
 
     def test_editar_competencia_documento_endpoint(self):
         """Testa o endpoint PUT /documentos/{id}/competencia para alterar competência."""
@@ -911,12 +920,12 @@ class TestFiscalAPI(unittest.TestCase):
         )
         self.assertEqual(response_put.status_code, 200)
         doc_data = response_put.json()
-        self.assertTrue(doc_data["data_emissao"].startswith("2026-07-01"))
+        self.assertTrue(doc_data["data_competencia"].startswith("2026-07-01"))
         
         # 3. Verifica se a alteração persistiu no banco
         response_get = self.client.get("/documentos")
         doc_get = response_get.json()[0]
-        self.assertTrue(doc_get["data_emissao"].startswith("2026-07-01"))
+        self.assertTrue(doc_get["data_competencia"].startswith("2026-07-01"))
 
     def test_editar_competencia_lote_endpoint(self):
         """Testa o endpoint POST /documentos/competencia-em-lote para alterar competência de múltiplas notas."""
@@ -959,7 +968,7 @@ class TestFiscalAPI(unittest.TestCase):
         response_get = self.client.get("/documentos")
         for doc in response_get.json():
             if doc["id"] in ids:
-                self.assertTrue(doc["data_emissao"].startswith("2026-11-01"))
+                self.assertTrue(doc["data_competencia"].startswith("2026-11-01"))
 
     def test_xml_storage_sincronizacao_competencia(self):
         """Testa se o arquivo XML físico é movido de pasta quando a competência é alterada."""

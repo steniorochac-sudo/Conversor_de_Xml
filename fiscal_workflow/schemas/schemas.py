@@ -95,6 +95,7 @@ class DocumentoResponse(BaseModel):
     cstat: str
     itens: Optional[List[Any]] = None
     data_emissao: Optional[datetime] = None
+    data_competencia: Optional[datetime] = None
     numero_nf: Optional[str] = None
     emitente_nome: Optional[str] = None
     destinatario_nome: Optional[str] = None

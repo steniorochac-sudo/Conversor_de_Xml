@@ -71,6 +71,7 @@ class DocumentoFiscal(Base):
     itens: Mapped[list] = mapped_column(JSON, nullable=True)
     cstat: Mapped[str] = mapped_column(String(10), default="100", nullable=False)
     data_emissao: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    data_competencia: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     numero_nf: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     emitente_nome: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     destinatario_nome: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
