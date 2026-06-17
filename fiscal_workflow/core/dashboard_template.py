@@ -56,7 +56,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
     <!-- HEADER / NAVIGATION -->
     <header class="sticky top-0 z-40 w-full bg-brand-900 text-white shadow-md">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+        <div class="max-w-[95%] mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
             <div class="flex items-center space-x-3">
                 <div class="bg-brand-500 p-2 rounded-lg text-white">
                     <i class="fa-solid fa-scale-balanced text-xl"></i>
@@ -79,7 +79,7 @@ HTML_CONTENT = """<!DOCTYPE html>
         </div>
     </header>
 
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <main class="max-w-[95%] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         <!-- TOP GRID: CADASTRAR EMPRESA & UPLOAD XML -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
@@ -357,7 +357,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                             <th class="px-6 py-4 text-right">Valor XML (Bruto)</th>
                             <th class="px-6 py-4 text-right">Valor Final (Staging)</th>
                             <th class="px-6 py-4">Status</th>
-                            <th class="px-6 py-4 text-center">Ações</th>
+                            <th class="px-6 py-4 text-center w-[180px] min-w-[180px]">Ações</th>
                         </tr>
                     </thead>
                     <tbody id="documentos-tbody" class="divide-y divide-slate-100 text-sm text-slate-600">
@@ -1100,6 +1100,39 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         // Executado no carregamento
         window.addEventListener('DOMContentLoaded', () => {
+            // Inicializa seletores de período com o mês anterior ao atual
+            const hoje = new Date();
+            hoje.setMonth(hoje.getMonth() - 1);
+            const mesAnterior = (hoje.getMonth() + 1).toString();
+            const mesAnteriorPad = mesAnterior.padStart(2, '0');
+            const anoAnterior = hoje.getFullYear().toString();
+
+            function setSelectValueOrAddOption(selectId, value, text = value) {
+                const select = document.getElementById(selectId);
+                if (!select) return;
+                let optionExists = false;
+                for (let i = 0; i < select.options.length; i++) {
+                    if (select.options[i].value === value) {
+                        optionExists = true;
+                        break;
+                    }
+                }
+                if (!optionExists) {
+                    const opt = document.createElement('option');
+                    opt.value = value;
+                    opt.textContent = text;
+                    select.appendChild(opt);
+                }
+                select.value = value;
+            }
+
+            setSelectValueOrAddOption('select-mes', mesAnterior);
+            setSelectValueOrAddOption('select-ano', anoAnterior);
+            setSelectValueOrAddOption('import-mes', mesAnterior);
+            setSelectValueOrAddOption('import-ano', anoAnterior);
+            setSelectValueOrAddOption('competencia-mes', mesAnteriorPad);
+            setSelectValueOrAddOption('competencia-ano', anoAnterior);
+
             carregarEmpresas();
             initCnaeAutocomplete('empresa');
             initCnaeAutocomplete('editar-empresa');
@@ -1736,6 +1769,11 @@ HTML_CONTENT = """<!DOCTYPE html>
                     document.getElementById('competencia-ano').value = partes[0];
                     document.getElementById('competencia-mes').value = partes[1];
                 }
+            } else {
+                const hoje = new Date();
+                hoje.setMonth(hoje.getMonth() - 1);
+                document.getElementById('competencia-mes').value = (hoje.getMonth() + 1).toString().padStart(2, '0');
+                document.getElementById('competencia-ano').value = hoje.getFullYear().toString();
             }
             toggleModal('modal-competencia', true);
         }
@@ -1750,8 +1788,14 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             const selectMes = document.getElementById('select-mes').value;
             const selectAno = document.getElementById('select-ano').value;
-            if (selectMes) document.getElementById('competencia-mes').value = selectMes.padStart(2, '0');
-            if (selectAno) document.getElementById('competencia-ano').value = selectAno;
+            
+            const hoje = new Date();
+            hoje.setMonth(hoje.getMonth() - 1);
+            const defaultMes = (hoje.getMonth() + 1).toString().padStart(2, '0');
+            const defaultAno = hoje.getFullYear().toString();
+            
+            document.getElementById('competencia-mes').value = selectMes ? selectMes.padStart(2, '0') : defaultMes;
+            document.getElementById('competencia-ano').value = selectAno ? selectAno : defaultAno;
 
             toggleModal('modal-competencia', true);
         }
