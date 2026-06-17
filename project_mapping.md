@@ -18,7 +18,7 @@ A aplicação é um **ecossistema de processamento e apuração de documentos fi
    - Fornece uma **Staging Area** (Área de Preparação) onde notas fiscais são importadas e podem ser editadas, auditadas e ter ajustes manuais registrados de forma rastreável.
    - Roda um Motor de Cálculo Dinâmico (Strategy Pattern) para simulação e apuração de tributos sob diferentes regimes (Simples Nacional - Anexos I, II [Indústria], III, IV e V [Fator R]; e Lucro Presumido - Prestação de Serviços).
    - Apresenta um **Painel de Controle Visual (Dashboard)** interativo e moderno incorporado diretamente no backend, contendo um visualizador de terminal de logs em tempo real integrado.
-   - **Armazenamento e Arquivamento de XMLs**: Ao realizar a importação de notas fiscais, o sistema copia e organiza automaticamente os arquivos XML fisicamente na pasta raiz `armazenamento_xml/` seguindo a estrutura `Empresa/Periodo (YYYYMM)/Movimento (Entradas ou Saídas)/Tipo (NFe ou NFSe)`.
+   - **Armazenamento e Arquivamento de XMLs**: Ao realizar a importação de notas fiscais, o sistema copia e organiza automaticamente os arquivos XML fisicamente na pasta raiz `armazenamento_xml/` seguindo a estrutura `Empresa/Periodo (YYYYMM)/Movimento (Entradas ou Saídas)/Tipo (NFe ou NFSe)`. Em caso de arquivos de lote de NFS-e (contendo múltiplas notas agrupadas), o sistema divide automaticamente o lote, salvando cada nota em um arquivo XML isolado contendo apenas o seu respectivo fragmento. Se a competência (período) de qualquer nota for alterada posteriormente (individualmente ou em lote), o sistema move automaticamente o XML físico para a nova pasta de período correspondente, limpando as pastas vazias remanescentes.
 
 ---
 
@@ -181,11 +181,22 @@ graph TD
 ```
 
 ### Fluxo B: Staging Area e Apuração Fiscal (API)
-1. **Upload / Ingestão**: O endpoint `/documentos/upload` recebe múltiplos XMLs. Ele faz o parse de cada um de maneira resiliente.
+1. **Upload / Ingestão**: O endpoint `/documentos/upload` recebe múltiplos XMLs de notas fiscais. O parse e processamento de arquivos ocorrem de maneira resiliente e avançada:
+   - **Upload Recursivo de Pastas**: A interface do Dashboard suporta a seleção de pastas inteiras (usando botão de seleção de pasta ou recurso de Drag-and-Drop recursivo por meio da API do leitor de diretórios `webkitGetAsEntry`). A estrutura de caminhos relativos dos subdiretórios é mantida e transmitida ao backend como o nome de arquivo relativo (`webkitRelativePath`), permitindo a análise contextual da estrutura de pastas.
+   - **Resolução de Período/Competência para Notas de Entrada (Compras)**: O período de competência da nota de compra segue a seguinte hierarquia de prioridade:
+     1. Período explicitamente forçado pelo usuário nos seletores da interface (`#forcar-entrada-opcoes`).
+     2. Período detectado a partir da estrutura de subpastas do caminho relativo do arquivo XML (ex: extraído usando padrões Regex como `YYYY-MM`, `YYYYMM`, `MM_YYYY` ou `MM-YYYY` pelo utilitário `obter_periodo_do_caminho`).
+     3. Data de emissão oficial contida nas tags do próprio arquivo XML (fallback padrão).
    - Extrai o valor do IPI (`valor_ipi` da tag `<vIPI>`) para cada item e salva no banco de dados dentro do JSON de itens.
    - Se o CNPJ do emitente da nota **não existe** no banco de dados, o sistema **autocadastra** a empresa com base no CRT (Código de Regime Tributário) informado na nota (CRT 1/2 = Simples Nacional, CRT 3 = Lucro Presumido).
    - Se o documento já existe, mas o XML traz um status diferente (ex: cancelamento), o campo `cstat` é atualizado na Staging Area.
-2. **Auditoria e Ajustes Manuais**: No Dashboard, fiscais podem registrar ajustes monetários em `/documentos/{id}/ajustes` (ex: glosas, estornos, exclusões judiciais de bases de cálculo). O status do documento muda automaticamente para `Em Revisão` e bloqueia novas alterações caso o período esteja `Encerrado`.
+   - **Divisão de Lotes de NFS-e**: Se o arquivo enviado contiver um lote de NFS-e (por exemplo, contendo múltiplos elementos `<CompNfse>` ou `<Nfse>`), o sistema extrai o fragmento individual de cada nota, gerando e salvando apenas o respectivo arquivo XML isolado na pasta de destino de armazenamento estruturado.
+2. **Auditoria, Competência e Ajustes Manuais**: No Dashboard, fiscais podem auditar as notas fiscais importadas e realizar as seguintes ações:
+   - **Registro de Ajustes Fiscais**: É possível registrar ajustes monetários em `/documentos/{id}/ajustes` (ex: glosas, estornos, exclusões judiciais de bases de cálculo). O status do documento muda automaticamente para `Em Revisão` e bloqueia novas alterações caso o período esteja `Encerrado`.
+   - **Alteração de Competência (Individual e em Lote)**: Fiscais podem corrigir/ajustar a competência de uma única nota ou de múltiplos documentos selecionados simultaneamente (por meio de um modal interativo de calendário no Dashboard Staging Area).
+   - **Sincronização Física Automática de Arquivos XML**: Sempre que a competência de uma nota é alterada no banco de dados (individualmente ou em lote), o sistema dispara um gancho de persistência que:
+     1. Move fisicamente o arquivo XML original no disco para o subdiretório correspondente ao novo período (seguindo o padrão `armazenamento_xml/Empresa/Periodo/Movimento/Tipo`).
+     2. Realiza uma varredura recursiva de limpeza nas pastas ancestrais antigas da nota, excluindo diretórios remanescentes que ficaram vazios após a movimentação dos arquivos.
 3. **Motor de Cálculo (Strategy Pattern)**: Quando `/documentos/{id}/apurar` é chamado:
    - A `CalculadoraFactory` identifica o Regime Tributário da empresa associada.
    - Se a nota for de **Entrada (Compra)**:

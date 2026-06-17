@@ -156,10 +156,19 @@ HTML_CONTENT = """<!DOCTYPE html>
                      ondrop="lidarComDrop(event)">
                     
                     <i class="fa-solid fa-cloud-arrow-up text-4xl text-slate-300 mb-3" id="upload-icon"></i>
-                    <p class="text-sm font-medium text-slate-700" id="upload-text">Arraste e solte arquivos XML (NF-e, NFC-e ou NFS-e) aqui ou clique para buscar</p>
-                    <p class="text-xs text-slate-400 mt-1">Os emitentes serão autodetectados e cadastrados automaticamente no banco de dados</p>
+                    <p class="text-sm font-medium text-slate-700" id="upload-text">Arraste e solte arquivos ou pastas XML aqui</p>
+                    <div class="flex space-x-3 mt-3 mb-2">
+                        <button type="button" onclick="event.stopPropagation(); document.getElementById('file-input').click()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors border border-slate-200">
+                            <i class="fa-solid fa-file mr-1"></i> Selecionar Arquivos
+                        </button>
+                        <button type="button" onclick="event.stopPropagation(); document.getElementById('folder-input').click()" class="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg transition-colors border border-slate-200">
+                            <i class="fa-solid fa-folder-open mr-1"></i> Selecionar Pasta
+                        </button>
+                    </div>
+                    <p class="text-xs text-slate-400">Os emitentes serão autodetectados e cadastrados automaticamente no banco de dados</p>
                     
                     <input type="file" id="file-input" class="hidden" accept=".xml" onchange="lidarComSelecaoArquivo(event)" multiple>
+                    <input type="file" id="folder-input" class="hidden" accept=".xml" webkitdirectory directory multiple onchange="lidarComSelecaoPasta(event)">
                 </div>
                 
                 <!-- Opções de Forçar Notas de Entrada de Terceiros -->
@@ -324,6 +333,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </button>
                     <button onclick="encerrarSelecionadas()" class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded font-medium transition-colors flex items-center ml-2">
                         <i class="fa-solid fa-lock mr-1.5"></i> Encerrar Selecionadas
+                    </button>
+                    <button onclick="abrirEditarCompetenciaEmLote()" class="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded font-medium transition-colors flex items-center ml-2">
+                        <i class="fa-solid fa-calendar-days mr-1.5"></i> Alterar Competência em Lote
                     </button>
                 </div>
                 <button onclick="desmarcarTodos()" class="text-slate-400 hover:text-slate-600">
@@ -554,6 +566,49 @@ HTML_CONTENT = """<!DOCTYPE html>
                 <div class="flex justify-end space-x-2 pt-2">
                     <button type="button" onclick="toggleModal('modal-editar-empresa', false)" class="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-sm font-medium">Cancelar</button>
                     <button type="submit" class="px-4 py-2 bg-brand-500 hover:bg-brand-600 text-white rounded-lg text-sm font-medium">Salvar Alterações</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- MODAL 5: EDITAR COMPETÊNCIA DO DOCUMENTO -->
+    <div id="modal-competencia" class="fixed inset-0 z-50 flex items-center justify-center bg-brand-900/40 backdrop-blur-sm hidden">
+        <div class="bg-white rounded-2xl shadow-xl w-full max-w-md mx-4 overflow-hidden border border-slate-100 animate-slide-in">
+            <div class="px-6 py-4 bg-blue-900 text-white flex items-center justify-between">
+                <h3 class="font-bold text-md"><i class="fa-solid fa-calendar-days mr-2"></i> Editar Competência da Nota</h3>
+                <button onclick="toggleModal('modal-competencia', false)" class="text-white/80 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <form id="form-competencia" onsubmit="salvarCompetencia(event)" class="p-6 space-y-4">
+                <input type="hidden" id="competencia-doc-id">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 mb-1">Competência (Mês/Ano):</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <select id="competencia-mes" required class="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium">
+                            <option value="01">Janeiro</option>
+                            <option value="02">Fevereiro</option>
+                            <option value="03">Março</option>
+                            <option value="04">Abril</option>
+                            <option value="05">Maio</option>
+                            <option value="06">Junho</option>
+                            <option value="07">Julho</option>
+                            <option value="08">Agosto</option>
+                            <option value="09">Setembro</option>
+                            <option value="10">Outubro</option>
+                            <option value="11">Novembro</option>
+                            <option value="12">Dezembro</option>
+                        </select>
+                        <select id="competencia-ano" required class="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium">
+                            <option value="2024">2024</option>
+                            <option value="2025">2025</option>
+                            <option value="2026">2026</option>
+                            <option value="2027">2027</option>
+                        </select>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-1.5">Isso alterará o período da nota fiscal na Staging Area para fins de apuração mensal consolidada.</p>
+                </div>
+                <div class="flex justify-end space-x-2 pt-2">
+                    <button type="button" onclick="toggleModal('modal-competencia', false)" class="px-4 py-2 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-sm font-medium">Cancelar</button>
+                    <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Salvar Competência</button>
                 </div>
             </form>
         </div>
@@ -1357,6 +1412,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                                     <button onclick="encerrarDocumento(${doc.id})" ${isEncerrado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Encerrar / Snapshot">
                                         <i class="fa-solid fa-lock"></i>
                                     </button>
+                                    <button onclick="abrirEditarCompetencia(${doc.id}, '${doc.data_emissao ? doc.data_emissao.substring(0, 10) : ''}')" ${isEncerrado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Editar Competência">
+                                        <i class="fa-solid fa-calendar-days"></i>
+                                    </button>
                                     <button onclick="deletarDocumento(${doc.id}, '${doc.chave_acesso}')" class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition-colors" title="Excluir Nota Fiscal">
                                         <i class="fa-solid fa-trash-can"></i>
                                     </button>
@@ -1439,12 +1497,77 @@ HTML_CONTENT = """<!DOCTYPE html>
             if (files && files.length > 0) fazerUploadXML(files);
         }
 
-        // Ingestão via Drag & Drop
-        function lidarComDrop(event) {
+        // Ingestão via Folder Selection
+        function lidarComSelecaoPasta(event) {
+            const files = event.target.files;
+            if (files && files.length > 0) fazerUploadXML(files);
+        }
+
+        // Ingestão via Drag & Drop (suporta pastas de forma recursiva)
+        async function lidarComDrop(event) {
             event.preventDefault();
             document.getElementById('dropzone').classList.remove('border-brand-500', 'bg-brand-50/20');
-            const files = event.dataTransfer.files;
-            if (files && files.length > 0) fazerUploadXML(files);
+            
+            const items = event.dataTransfer.items;
+            if (items && items.length > 0) {
+                let fileList = [];
+                let promises = [];
+                for (let i = 0; i < items.length; i++) {
+                    if (typeof items[i].webkitGetAsEntry === 'function') {
+                        const item = items[i].webkitGetAsEntry();
+                        if (item) {
+                            promises.push(traverseFileTree(item).then(files => {
+                                fileList = fileList.concat(files);
+                            }));
+                        }
+                    }
+                }
+                await Promise.all(promises);
+                if (fileList.length > 0) {
+                    fazerUploadXML(fileList);
+                }
+            } else {
+                const files = event.dataTransfer.files;
+                if (files && files.length > 0) fazerUploadXML(files);
+            }
+        }
+
+        async function traverseFileTree(item, path = "") {
+            return new Promise((resolve) => {
+                if (item.isFile) {
+                    item.file((file) => {
+                        Object.defineProperty(file, 'relativePath', {
+                            value: path + file.name,
+                            writable: true
+                        });
+                        resolve([file]);
+                    });
+                } else if (item.isDirectory) {
+                    const dirReader = item.createReader();
+                    let entries = [];
+                    
+                    const readEntries = () => {
+                        dirReader.readEntries(async (results) => {
+                            if (results.length) {
+                                entries = entries.concat(results);
+                                readEntries();
+                            } else {
+                                let files = [];
+                                for (let i = 0; i < entries.length; i++) {
+                                    let childFiles = await traverseFileTree(entries[i], path + item.name + "/");
+                                    files = files.concat(childFiles);
+                                }
+                                resolve(files);
+                            }
+                        }, () => {
+                            resolve([]);
+                        });
+                    };
+                    readEntries();
+                } else {
+                    resolve([]);
+                }
+            });
         }
 
         async function fazerUploadXML(files) {
@@ -1484,7 +1607,8 @@ HTML_CONTENT = """<!DOCTYPE html>
             
             // Adiciona múltiplos arquivos no form-data sob a chave "files"
             xmlFiles.forEach(file => {
-                formData.append("files", file);
+                const filename = file.webkitRelativePath || file.relativePath || file.name;
+                formData.append("files", file, filename);
             });
 
             const uploadIcon = document.getElementById('upload-icon');
@@ -1525,10 +1649,9 @@ HTML_CONTENT = """<!DOCTYPE html>
             } catch (err) {
                 showToast("Erro de rede ao carregar arquivo(s).", "error");
             } finally {
-                // Restaura o dropzone
+                // Restaura the dropzone
                 uploadIcon.className = "fa-solid fa-cloud-arrow-up text-4xl text-slate-300 mb-3";
-                uploadText.textContent = "Arraste e solte arquivos XML (NF-e, NFC-e ou NFS-e) aqui ou clique para buscar";
-                document.getElementById('file-input').value = '';
+                uploadText.textContent = "Arraste e solte arquivos ou pastas XML aqui";
             }
         }
 
@@ -1602,6 +1725,95 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
             } catch (err) {
                 showToast("Erro de rede ao excluir.", "error");
+            }
+        }
+
+        function abrirEditarCompetencia(id, dataEmissao) {
+            document.getElementById('competencia-doc-id').value = id;
+            if (dataEmissao) {
+                const partes = dataEmissao.split('-');
+                if (partes.length >= 2) {
+                    document.getElementById('competencia-ano').value = partes[0];
+                    document.getElementById('competencia-mes').value = partes[1];
+                }
+            }
+            toggleModal('modal-competencia', true);
+        }
+
+        function abrirEditarCompetenciaEmLote() {
+            const ids = obterIdsSelecionados();
+            if (ids.length === 0) {
+                showToast("Por favor, selecione ao menos uma nota fiscal.", "warning");
+                return;
+            }
+            document.getElementById('competencia-doc-id').value = "batch";
+            
+            const selectMes = document.getElementById('select-mes').value;
+            const selectAno = document.getElementById('select-ano').value;
+            if (selectMes) document.getElementById('competencia-mes').value = selectMes.padStart(2, '0');
+            if (selectAno) document.getElementById('competencia-ano').value = selectAno;
+
+            toggleModal('modal-competencia', true);
+        }
+
+        async function salvarCompetenciaEmLote(dataCompetencia) {
+            const ids = obterIdsSelecionados();
+            if (ids.length === 0) return;
+            
+            try {
+                const res = await fetch(`${API_URL}/documentos/competencia-em-lote`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ ids: ids, data_competencia: dataCompetencia })
+                });
+
+                if (res.ok) {
+                    showToast(`Competência de ${ids.length} nota(s) atualizada com sucesso!`);
+                    toggleModal('modal-competencia', false);
+                    desmarcarTodos();
+                    await carregarDocumentos();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || "Erro ao atualizar competência em lote", "error");
+                }
+            } catch (err) {
+                showToast("Erro ao conectar com o servidor.", "error");
+            }
+        }
+
+        async function salvarCompetencia(event) {
+            event.preventDefault();
+            const id = document.getElementById('competencia-doc-id').value;
+            const mes = document.getElementById('competencia-mes').value;
+            const ano = document.getElementById('competencia-ano').value;
+            const dataCompetencia = `${ano}-${mes}`;
+
+            if (id === "batch") {
+                await salvarCompetenciaEmLote(dataCompetencia);
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/documentos/${id}/competencia`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ data_competencia: dataCompetencia })
+                });
+
+                if (res.ok) {
+                    showToast("Competência da nota atualizada com sucesso!");
+                    toggleModal('modal-competencia', false);
+                    await carregarDocumentos();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || "Erro ao atualizar competência", "error");
+                }
+            } catch (err) {
+                showToast("Erro ao conectar com o servidor.", "error");
             }
         }
 

@@ -38,4 +38,10 @@ decreto_icms_ba.pdf
 # IGNORAR CONFIGURAÇÕES DO VS CODE
 # ==========================================
 .vscode/
-*.log
+*.log
+
+# ==========================================
+# IGNORAR PASTAS DE ARMAZENAMENTO DE XML
+# ==========================================
+armazenamento_xml/
+armazenamento-xml/

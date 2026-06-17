@@ -8,9 +8,12 @@ if settings.DATABASE_URL.startswith("sqlite"):
     connect_args["check_same_thread"] = False
 
 # Criação do motor do banco de dados (engine)
+# Adicionados pool_recycle e pool_pre_ping para evitar que conexões inativas travem o servidor
 engine = create_engine(
     settings.DATABASE_URL, 
-    connect_args=connect_args
+    connect_args=connect_args,
+    pool_recycle=1800,
+    pool_pre_ping=True
 )
 
 # Pool de sessões de banco de dados

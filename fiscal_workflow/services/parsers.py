@@ -3,6 +3,25 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Dict, List, Any, Optional
 
+
+def obter_xml_individual(node: Any) -> bytes:
+    """
+    Vai subindo no XML a partir do nó da nota até achar a tag que encapsula a nota
+    individual (ex: CompNfse ou Nfse), mas parando antes da raiz do lote (ex: ListaNfse).
+    """
+    current = node
+    while current.getparent() is not None:
+        parent = current.getparent()
+        parent_tag_lower = parent.tag.lower()
+        if "listanfse" in parent_tag_lower or "consultarnfsereposta" in parent_tag_lower or parent.getparent() is None:
+            break
+        current = parent
+    
+    fragmento = etree.tostring(current, encoding='utf-8')
+    if not fragmento.startswith(b"<?xml"):
+        fragmento = b'<?xml version="1.0" encoding="UTF-8"?>\n' + fragmento
+    return fragmento
+
 def get_xml_text(element: Any, xpath_query: str, namespaces: Dict[str, str]) -> Optional[str]:
     """Retorna o texto de um elemento a partir de uma consulta XPath ou None."""
     result = element.xpath(xpath_query, namespaces=namespaces)
@@ -265,7 +284,8 @@ def parse_nfe(xml_content: bytes) -> Dict[str, Any]:
         "destinatario_uf": destinatario_uf,
         "valor_total": total_val,
         "cstat": cstat,
-        "itens": itens_extraidos
+        "itens": itens_extraidos,
+        "xml_content": xml_content
     }
 
 def parse_nfse(xml_content: bytes) -> List[Dict[str, Any]]:
@@ -436,7 +456,8 @@ def parse_nfse(xml_content: bytes) -> List[Dict[str, Any]]:
                 "destinatario_uf": destinatario_uf,
                 "valor_total": total_val,
                 "cstat": cstat,
-                "itens": [item_virtual]
+                "itens": [item_virtual],
+                "xml_content": obter_xml_individual(inf_nfse)
             })
 
     # 2. Se não encontrou notas do SPED, tenta no padrão ABRASF
@@ -552,7 +573,8 @@ def parse_nfse(xml_content: bytes) -> List[Dict[str, Any]]:
                 "destinatario_uf": dest_uf,
                 "valor_total": total_val,
                 "cstat": cstat,
-                "itens": [item_virtual]
+                "itens": [item_virtual],
+                "xml_content": obter_xml_individual(inf_nfse)
             })
 
     if not notas:

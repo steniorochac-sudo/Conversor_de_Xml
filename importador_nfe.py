@@ -27,6 +27,37 @@ def p(tag, root, ns):
     except:
         return None
 
+import re
+
+def obter_periodo(diretorio_atual, data_emissao_dt):
+    """
+    Determina o período fiscal (MM-YYYY) a partir da data de emissão ou da pasta.
+    """
+    # 1. Tenta extrair a partir da data de emissão (Mais preciso)
+    if data_emissao_dt:
+        return data_emissao_dt.strftime("%m-%Y")
+        
+    # 2. Tenta extrair um padrão de período (ex: 05-2026, 05/2026, 202605) do caminho completo
+    # Procura por MM-YYYY ou MM_YYYY ou MM/YYYY
+    match = re.search(r'\b(0[1-9]|1[0-2])[-/_](\d{4})\b', diretorio_atual)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}"
+        
+    # Procura por YYYYMM ou MMYYYY
+    match_digits = re.search(r'\b(\d{6})\b', diretorio_atual)
+    if match_digits:
+        digits = match_digits.group(1)
+        # Se os primeiros 4 dígitos parecem um ano (ex: 202605)
+        if 2000 <= int(digits[:4]) <= 2100:
+            return f"{digits[4:6]}-{digits[:4]}"
+        # Se os últimos 4 dígitos parecem um ano (ex: 052026)
+        elif 2000 <= int(digits[2:]) <= 2100:
+            return f"{digits[:2]}-{digits[2:]}"
+            
+    # 3. Fallback para o nome da pasta atual
+    return os.path.basename(diretorio_atual)
+
+
 # 1. Adicione os parâmetros na função:
 def processar(pasta_xml, banco_access, barra_progresso=None):
     tempo_inicio = time.time()
@@ -58,6 +89,7 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                 if barra_progresso and total_arquivos > 0:
                     barra_progresso['value'] = (arquivos_processados / total_arquivos) * 100
                 
+                try:
                     caminho = os.path.join(diretorio_atual, arquivo)
                     with open(caminho, 'rb') as f:
                         xml_content = f.read()
@@ -88,8 +120,8 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                         d_emi = dados_nota["data_emissao"]
                         d_emi_dt = datetime.fromisoformat(d_emi[:10]) if d_emi else None
                     
-                        # O período é o nome da pasta onde o XML está localizado
-                        periodo = os.path.basename(diretorio_atual)
+                        # O período é detectado dinamicamente com base na emissão ou pasta
+                        periodo = obter_periodo(diretorio_atual, d_emi_dt)
 
                         # Loop nos itens
                         for item in dados_nota["itens"]:
@@ -190,7 +222,6 @@ def processar(pasta_xml, banco_access, barra_progresso=None):
                         
                         print(f"✅ Nota {n_nf} ({dados_nota['tipo_documento']}) importada.")
                         conn.commit()
-                    
                 except Exception as e_file:
                     print(f"❌ Erro no arquivo {arquivo}: {e_file}")
                 

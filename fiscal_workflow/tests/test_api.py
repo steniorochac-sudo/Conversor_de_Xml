@@ -1,6 +1,7 @@
 import io
 import unittest
 from decimal import Decimal
+from datetime import datetime
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
@@ -808,9 +809,10 @@ class TestFiscalAPI(unittest.TestCase):
         import shutil
         from pathlib import Path
         
-        # 1. Limpa qualquer armazenamento de teste prévio
+        # 1. Limpa qualquer armazenamento de teste prévio apenas para a empresa de teste
         test_storage = Path("armazenamento_xml")
-        shutil.rmtree(test_storage, ignore_errors=True)
+        test_company_storage = test_storage / "Stenio_Software_Tech_Ltda"
+        shutil.rmtree(test_company_storage, ignore_errors=True)
         
         # 2. Cadastra uma empresa emitente com caracteres inválidos no nome
         response_empresa = self.client.post(
@@ -834,7 +836,7 @@ class TestFiscalAPI(unittest.TestCase):
         
         # 4. Verifica se o caminho esperado foi gerado corretamente
         # Razão social saneada: "Stenio_Software_Tech_Ltda"
-        expected_path = test_storage / "Stenio_Software_Tech_Ltda" / "202305" / "Saídas" / "NFe" / "35230512345678000199550010000001231234567890.xml"
+        expected_path = test_company_storage / "202305" / "Saídas" / "NFe" / "35230512345678000199550010000001231234567890.xml"
         
         self.assertTrue(expected_path.exists(), f"Caminho esperado não foi criado: {expected_path}")
         
@@ -843,8 +845,172 @@ class TestFiscalAPI(unittest.TestCase):
             saved_content = f.read()
         self.assertEqual(saved_content, MOCK_NFE_XML)
         
-        # Limpa o diretório de teste
-        shutil.rmtree(test_storage, ignore_errors=True)
+        # Limpa apenas o diretório de teste
+        shutil.rmtree(test_company_storage, ignore_errors=True)
+
+    def test_obter_periodo_do_caminho(self):
+        """Testa o extrator obter_periodo_do_caminho com diferentes formatos de pasta."""
+        from fiscal_workflow.main import obter_periodo_do_caminho
+        self.assertEqual(obter_periodo_do_caminho("05-2026/nota.xml"), datetime(2026, 5, 1))
+        self.assertEqual(obter_periodo_do_caminho("pasta/202606/nota.xml"), datetime(2026, 6, 1))
+        self.assertEqual(obter_periodo_do_caminho("pasta/07_2026/nota.xml"), datetime(2026, 7, 1))
+        self.assertEqual(obter_periodo_do_caminho("2026-08/nota.xml"), datetime(2026, 8, 1))
+        self.assertEqual(obter_periodo_do_caminho("sem_data/nota.xml"), None)
+
+    def test_upload_entrada_period_hierarchy(self):
+        """Testa a hierarquia de resolução de período de Entrada na API de upload (pasta vs emissão)."""
+        # 1. Cadastra a empresa destinatária para ser tratada como Entrada
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "98765432000188",
+                "razao_social": "Cliente Exemplo SA",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        self.assertEqual(response_empresa.status_code, 201)
+        
+        # 2. Upload de nota fiscal com caminho de subpasta contendo o período '2026-10'
+        # A emissão original do MOCK_NFE_XML é 2023-05-15
+        xml_file = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("subpasta/2026-10/nfe.xml", xml_file, "text/xml"))]
+        )
+        self.assertEqual(response_upload.status_code, 201)
+        doc_data = response_upload.json()[0]
+        
+        # Como é Entrada, deve priorizar a pasta sobre a data de emissão
+        self.assertEqual(doc_data["tipo_operacao"], "Entrada")
+        self.assertTrue(doc_data["data_emissao"].startswith("2026-10-01"))
+
+    def test_editar_competencia_documento_endpoint(self):
+        """Testa o endpoint PUT /documentos/{id}/competencia para alterar competência."""
+        # 1. Cadastra a empresa e faz upload de nota
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio Software Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+        
+        xml_file = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe.xml", xml_file, "text/xml"))]
+        )
+        doc_id = response_upload.json()[0]["id"]
+        
+        # 2. Altera a competência da nota
+        response_put = self.client.put(
+            f"/documentos/{doc_id}/competencia",
+            json={"data_competencia": "2026-07"}
+        )
+        self.assertEqual(response_put.status_code, 200)
+        doc_data = response_put.json()
+        self.assertTrue(doc_data["data_emissao"].startswith("2026-07-01"))
+        
+        # 3. Verifica se a alteração persistiu no banco
+        response_get = self.client.get("/documentos")
+        doc_get = response_get.json()[0]
+        self.assertTrue(doc_get["data_emissao"].startswith("2026-07-01"))
+
+    def test_editar_competencia_lote_endpoint(self):
+        """Testa o endpoint POST /documentos/competencia-em-lote para alterar competência de múltiplas notas."""
+        # 1. Cadastra a empresa e faz upload de 2 notas
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Stenio Software Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+        
+        xml_file_1 = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+        mock_xml_2 = MOCK_NFE_XML.replace(
+            "35230512345678000199550010000001231234567890", "35230512345678000199550010000001241234567890"
+        )
+        xml_file_2 = io.BytesIO(mock_xml_2.encode('utf-8'))
+        
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[
+                ("files", ("nfe1.xml", xml_file_1, "text/xml")),
+                ("files", ("nfe2.xml", xml_file_2, "text/xml"))
+            ]
+        )
+        docs = response_upload.json()
+        ids = [doc["id"] for doc in docs]
+        
+        # 2. Altera a competência em lote
+        response_post = self.client.post(
+            "/documentos/competencia-em-lote",
+            json={"ids": ids, "data_competencia": "2026-11"}
+        )
+        self.assertEqual(response_post.status_code, 200)
+        self.assertIn("Competência de 2 documentos fiscais", response_post.json()["detail"])
+        
+        # 3. Verifica se as alterações persistiram no banco
+        response_get = self.client.get("/documentos")
+        for doc in response_get.json():
+            if doc["id"] in ids:
+                self.assertTrue(doc["data_emissao"].startswith("2026-11-01"))
+
+    def test_xml_storage_sincronizacao_competencia(self):
+        """Testa se o arquivo XML físico é movido de pasta quando a competência é alterada."""
+        import shutil
+        from pathlib import Path
+        
+        # 1. Limpa diretório de testes
+        test_storage = Path("armazenamento_xml")
+        test_company_storage = test_storage / "Sincronia Ltda"
+        shutil.rmtree(test_company_storage, ignore_errors=True)
+        
+        # 2. Cadastra empresa e faz upload de XML
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "12345678000199",
+                "razao_social": "Sincronia Ltda",
+                "regime_tributario": "Simples Nacional",
+                "uf": "BA"
+            }
+        )
+        self.assertEqual(response_empresa.status_code, 201)
+        
+        xml_file = io.BytesIO(MOCK_NFE_XML.encode('utf-8'))
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe_venda.xml", xml_file, "text/xml"))]
+        )
+        doc_id = response_upload.json()[0]["id"]
+        
+        # Caminho original da nota: 202305
+        original_path = test_company_storage / "202305" / "Saídas" / "NFe" / "35230512345678000199550010000001231234567890.xml"
+        self.assertTrue(original_path.exists())
+        
+        # 3. Altera competência para 2026-07
+        response_put = self.client.put(
+            f"/documentos/{doc_id}/competencia",
+            json={"data_competencia": "2026-07"}
+        )
+        self.assertEqual(response_put.status_code, 200)
+        
+        # Novo caminho esperado da nota: 202607
+        new_path = test_company_storage / "202607" / "Saídas" / "NFe" / "35230512345678000199550010000001231234567890.xml"
+        
+        # O arquivo no caminho antigo deve ter sido movido (não existir mais)
+        self.assertFalse(original_path.exists())
+        # O arquivo deve existir no novo caminho
+        self.assertTrue(new_path.exists())
+        
+        # Limpa o diretório de testes
+        shutil.rmtree(test_company_storage, ignore_errors=True)
 
 if __name__ == "__main__":
     unittest.main()
