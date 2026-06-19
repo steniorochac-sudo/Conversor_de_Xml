@@ -1021,5 +1021,73 @@ class TestFiscalAPI(unittest.TestCase):
         # Limpa o diretório de testes
         shutil.rmtree(test_company_storage, ignore_errors=True)
 
+    def test_advanced_filtering_endpoints(self):
+        """Testa a listagem de documentos com os novos filtros avançados e busca geral."""
+        # 1. Cadastra a empresa
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "98765432000100",
+                "razao_social": "Filtros Software Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+        
+        # 2. Insere manualmente documentos com datas e chaves diferentes para testar
+        db = next(override_get_db())
+        from fiscal_workflow.models.models import DocumentoFiscal
+        doc1 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230598765432000100550010000007777744567891",
+            tipo_documento="NF-e",
+            numero_nf="123",
+            valor_total=Decimal("1000.00"),
+            data_emissao=datetime(2026, 5, 10),
+            data_competencia=datetime(2026, 5, 1),
+            emitente_nome="Distribuidora Alpha",
+            destinatario_nome="Filtros Software Ltda"
+        )
+        doc2 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230598765432000100550010000007777744567892",
+            tipo_documento="NF-e",
+            numero_nf="456",
+            valor_total=Decimal("2000.00"),
+            data_emissao=datetime(2026, 6, 15),
+            data_competencia=datetime(2026, 6, 1),
+            emitente_nome="Comercial Beta",
+            destinatario_nome="Filtros Software Ltda"
+        )
+        db.add_all([doc1, doc2])
+        db.commit()
+        db.close()
+        
+        # 3. Teste Busca Geral
+        # 3.1 Busca por número
+        response = self.client.get(f"/documentos?empresa_id={emp_id}&busca=123")
+        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(response.json()[0]["numero_nf"], "123")
+        
+        # 3.2 Busca por emitente (case insensitive)
+        response = self.client.get(f"/documentos?empresa_id={emp_id}&busca=beta")
+        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(response.json()[0]["emitente_nome"], "Comercial Beta")
+        
+        # 4. Teste Range de Emissão
+        # 4.1 Fora do range de emissão de Maio
+        response = self.client.get(f"/documentos?empresa_id={emp_id}&data_emissao_inicio=2026-06-01")
+        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(response.json()[0]["numero_nf"], "456")
+        
+        # 4.2 Entre datas
+        response = self.client.get(f"/documentos?empresa_id={emp_id}&data_emissao_inicio=2026-05-01&data_emissao_fim=2026-05-20")
+        self.assertEqual(len(response.json()), 1)
+        self.assertEqual(response.json()[0]["numero_nf"], "123")
+        
+        # 5. Teste Range de Competência
+        response = self.client.get(f"/documentos?empresa_id={emp_id}&data_competencia_inicio=2026-05-01&data_competencia_fim=2026-06-01")
+        self.assertEqual(len(response.json()), 2)
+
 if __name__ == "__main__":
     unittest.main()

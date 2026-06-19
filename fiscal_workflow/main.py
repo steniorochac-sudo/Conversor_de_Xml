@@ -713,10 +713,15 @@ def listar_documentos(
     mes: Optional[int] = None,
     ano: Optional[int] = None,
     tipo_operacao: Optional[str] = None,
+    busca: Optional[str] = None,
+    data_emissao_inicio: Optional[str] = None,
+    data_emissao_fim: Optional[str] = None,
+    data_competencia_inicio: Optional[str] = None,
+    data_competencia_fim: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Lista todos os documentos importados (Staging Area) com filtros opcionais."""
-    from sqlalchemy import extract
+    from sqlalchemy import extract, or_
     query = db.query(DocumentoFiscal)
     if empresa_id:
         query = query.filter(DocumentoFiscal.empresa_id == empresa_id)
@@ -728,6 +733,43 @@ def listar_documentos(
         query = query.filter(extract('year', DocumentoFiscal.data_competencia) == ano)
     if tipo_operacao:
         query = query.filter(DocumentoFiscal.tipo_operacao == tipo_operacao)
+        
+    if busca:
+        busca_lower = f"%{busca}%"
+        query = query.filter(
+            or_(
+                DocumentoFiscal.numero_nf.ilike(busca_lower),
+                DocumentoFiscal.chave_acesso.ilike(busca_lower),
+                DocumentoFiscal.emitente_nome.ilike(busca_lower),
+                DocumentoFiscal.destinatario_nome.ilike(busca_lower)
+            )
+        )
+        
+    if data_emissao_inicio:
+        try:
+            dt_inicio = datetime.fromisoformat(data_emissao_inicio)
+            query = query.filter(DocumentoFiscal.data_emissao >= dt_inicio)
+        except ValueError:
+            pass
+    if data_emissao_fim:
+        try:
+            dt_fim = datetime.fromisoformat(data_emissao_fim).replace(hour=23, minute=59, second=59)
+            query = query.filter(DocumentoFiscal.data_emissao <= dt_fim)
+        except ValueError:
+            pass
+            
+    if data_competencia_inicio:
+        try:
+            dt_comp_inicio = datetime.fromisoformat(data_competencia_inicio)
+            query = query.filter(DocumentoFiscal.data_competencia >= dt_comp_inicio)
+        except ValueError:
+            pass
+    if data_competencia_fim:
+        try:
+            dt_comp_fim = datetime.fromisoformat(data_competencia_fim).replace(hour=23, minute=59, second=59)
+            query = query.filter(DocumentoFiscal.data_competencia <= dt_comp_fim)
+        except ValueError:
+            pass
     
     return query.all()
 
@@ -844,6 +886,11 @@ def apurar_consolidado_empresa(
     empresa_id: int, 
     mes: Optional[int] = None,
     ano: Optional[int] = None,
+    busca: Optional[str] = None,
+    data_emissao_inicio: Optional[str] = None,
+    data_emissao_fim: Optional[str] = None,
+    data_competencia_inicio: Optional[str] = None,
+    data_competencia_fim: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -859,12 +906,50 @@ def apurar_consolidado_empresa(
         )
 
     # 2. Busca todas as notas da empresa
-    from sqlalchemy import extract
+    from sqlalchemy import extract, or_
     query = db.query(DocumentoFiscal).filter(DocumentoFiscal.empresa_id == empresa_id)
     if mes:
         query = query.filter(extract('month', DocumentoFiscal.data_competencia) == mes)
     if ano:
         query = query.filter(extract('year', DocumentoFiscal.data_competencia) == ano)
+        
+    if busca:
+        busca_lower = f"%{busca}%"
+        query = query.filter(
+            or_(
+                DocumentoFiscal.numero_nf.ilike(busca_lower),
+                DocumentoFiscal.chave_acesso.ilike(busca_lower),
+                DocumentoFiscal.emitente_nome.ilike(busca_lower),
+                DocumentoFiscal.destinatario_nome.ilike(busca_lower)
+            )
+        )
+        
+    if data_emissao_inicio:
+        try:
+            dt_inicio = datetime.fromisoformat(data_emissao_inicio)
+            query = query.filter(DocumentoFiscal.data_emissao >= dt_inicio)
+        except ValueError:
+            pass
+    if data_emissao_fim:
+        try:
+            dt_fim = datetime.fromisoformat(data_emissao_fim).replace(hour=23, minute=59, second=59)
+            query = query.filter(DocumentoFiscal.data_emissao <= dt_fim)
+        except ValueError:
+            pass
+            
+    if data_competencia_inicio:
+        try:
+            dt_comp_inicio = datetime.fromisoformat(data_competencia_inicio)
+            query = query.filter(DocumentoFiscal.data_competencia >= dt_comp_inicio)
+        except ValueError:
+            pass
+    if data_competencia_fim:
+        try:
+            dt_comp_fim = datetime.fromisoformat(data_competencia_fim).replace(hour=23, minute=59, second=59)
+            query = query.filter(DocumentoFiscal.data_competencia <= dt_comp_fim)
+        except ValueError:
+            pass
+            
     documentos = query.all()
 
     # Separa os documentos por tipo de operação para apuração correta

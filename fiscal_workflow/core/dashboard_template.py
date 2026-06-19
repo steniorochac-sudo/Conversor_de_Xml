@@ -324,6 +324,49 @@ HTML_CONTENT = """<!DOCTYPE html>
                     Entradas (Compras)
                 </button>
             </div>
+            
+            <!-- Painel de Busca e Filtros Avançados -->
+            <div class="px-6 py-4 bg-slate-50/50 border-b border-slate-100 space-y-3">
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                    <!-- Busca Rápida -->
+                    <div class="relative flex-1 max-w-md">
+                        <span class="absolute inset-y-0 left-0 flex items-center pl-3 pointer-events-none text-slate-400">
+                            <i class="fa-solid fa-magnifying-glass text-sm"></i>
+                        </span>
+                        <input type="text" id="search-input" onkeyup="filtrarComDelay()" class="w-full bg-white border border-slate-200 rounded-lg pl-9 pr-4 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500" placeholder="Buscar por número, chave ou parceiro...">
+                    </div>
+                    <!-- Controles de Filtros Avançados -->
+                    <div class="flex items-center space-x-2">
+                        <button onclick="toggleFiltrosAvancados()" class="inline-flex items-center px-3 py-2 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-lg text-xs font-semibold transition-colors">
+                            <i class="fa-solid fa-sliders mr-1.5 text-brand-500"></i> Filtros Avançados
+                        </button>
+                        <button onclick="limparFiltrosTodos()" class="inline-flex items-center px-3 py-2 bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 rounded-lg text-xs font-semibold transition-colors">
+                            <i class="fa-solid fa-filter-circle-xmark mr-1.5 text-rose-500"></i> Limpar Filtros
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Painel Expansível de Filtros Avançados -->
+                <div id="filtros-avancados-panel" class="hidden grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-white rounded-xl border border-slate-100 animate-slide-in">
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Emissão (De):</label>
+                        <input type="date" id="filter-emissao-inicio" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Emissão (Até):</label>
+                        <input type="date" id="filter-emissao-fim" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Competência (De):</label>
+                        <input type="date" id="filter-competencia-inicio" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Competência (Até):</label>
+                        <input type="date" id="filter-competencia-fim" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                    </div>
+                </div>
+            </div>
+
             <!-- Painel de Ações em Lote (oculto por padrão) -->
             <div id="batch-actions-panel" class="hidden bg-slate-50 border-b border-slate-100 px-6 py-3 flex items-center justify-between text-xs transition-all duration-300">
                 <div class="flex items-center space-x-2">
@@ -1323,6 +1366,36 @@ HTML_CONTENT = """<!DOCTYPE html>
         // FLUXO DE DOCUMENTOS (XMLs)
         // ==========================================
 
+        let searchTimeout = null;
+
+        function filtrarComDelay() {
+            if (searchTimeout) clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                carregarDocumentos();
+            }, 300);
+        }
+
+        function toggleFiltrosAvancados() {
+            const panel = document.getElementById('filtros-avancados-panel');
+            panel.classList.toggle('hidden');
+        }
+
+        function limparFiltrosTodos() {
+            document.getElementById('search-input').value = '';
+            document.getElementById('filter-emissao-inicio').value = '';
+            document.getElementById('filter-emissao-fim').value = '';
+            document.getElementById('filter-competencia-inicio').value = '';
+            document.getElementById('filter-competencia-fim').value = '';
+            
+            // Restaura o período do mês anterior padrão
+            const hoje = new Date();
+            hoje.setMonth(hoje.getMonth() - 1);
+            document.getElementById('select-mes').value = (hoje.getMonth() + 1).toString();
+            document.getElementById('select-ano').value = hoje.getFullYear().toString();
+            
+            carregarDocumentos();
+        }
+
         async function carregarDocumentos() {
             atualizarInfoEmpresa();
             const select = document.getElementById('select-empresa');
@@ -1345,10 +1418,21 @@ HTML_CONTENT = """<!DOCTYPE html>
 
             const mesVal = document.getElementById('select-mes').value;
             const anoVal = document.getElementById('select-ano').value;
+            const buscaVal = document.getElementById('search-input').value.trim();
+            const emissaoInicioVal = document.getElementById('filter-emissao-inicio').value;
+            const emissaoFimVal = document.getElementById('filter-emissao-fim').value;
+            const competenciaInicioVal = document.getElementById('filter-competencia-inicio').value;
+            const competenciaFimVal = document.getElementById('filter-competencia-fim').value;
+
             let url = `${API_URL}/documentos?empresa_id=${empresaId}`;
             if (mesVal) url += `&mes=${mesVal}`;
             if (anoVal) url += `&ano=${anoVal}`;
             if (activeTipoOperacao) url += `&tipo_operacao=${activeTipoOperacao}`;
+            if (buscaVal) url += `&busca=${encodeURIComponent(buscaVal)}`;
+            if (emissaoInicioVal) url += `&data_emissao_inicio=${emissaoInicioVal}`;
+            if (emissaoFimVal) url += `&data_emissao_fim=${emissaoFimVal}`;
+            if (competenciaInicioVal) url += `&data_competencia_inicio=${competenciaInicioVal}`;
+            if (competenciaFimVal) url += `&data_competencia_fim=${competenciaFimVal}`;
 
             try {
                 const res = await fetch(url);
@@ -1469,10 +1553,22 @@ HTML_CONTENT = """<!DOCTYPE html>
             const section = document.getElementById('consolidado-section');
             const mesVal = document.getElementById('select-mes').value;
             const anoVal = document.getElementById('select-ano').value;
+            const buscaVal = document.getElementById('search-input').value.trim();
+            const emissaoInicioVal = document.getElementById('filter-emissao-inicio').value;
+            const emissaoFimVal = document.getElementById('filter-emissao-fim').value;
+            const competenciaInicioVal = document.getElementById('filter-competencia-inicio').value;
+            const competenciaFimVal = document.getElementById('filter-competencia-fim').value;
+
             let url = `${API_URL}/empresas/${empresaId}/consolidado`;
             let params = [];
             if (mesVal) params.push(`mes=${mesVal}`);
             if (anoVal) params.push(`ano=${anoVal}`);
+            if (buscaVal) params.push(`busca=${encodeURIComponent(buscaVal)}`);
+            if (emissaoInicioVal) params.push(`data_emissao_inicio=${emissaoInicioVal}`);
+            if (emissaoFimVal) params.push(`data_emissao_fim=${emissaoFimVal}`);
+            if (competenciaInicioVal) params.push(`data_competencia_inicio=${competenciaInicioVal}`);
+            if (competenciaFimVal) params.push(`data_competencia_fim=${competenciaFimVal}`);
+            
             if (params.length > 0) {
                 url += `?${params.join('&')}`;
             }
