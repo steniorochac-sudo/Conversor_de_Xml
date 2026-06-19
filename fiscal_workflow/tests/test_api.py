@@ -1089,5 +1089,55 @@ class TestFiscalAPI(unittest.TestCase):
         response = self.client.get(f"/documentos?empresa_id={emp_id}&data_competencia_inicio=2026-05-01&data_competencia_fim=2026-06-01")
         self.assertEqual(len(response.json()), 2)
 
+    def test_listar_competencias_empresa(self):
+        """Testa o endpoint GET /empresas/{empresa_id}/competencias para listar as competências disponíveis."""
+        # 1. Cadastra a empresa
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "98765432000200",
+                "razao_social": "Competencias Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+        
+        # 2. Insere notas com competências distintas
+        db = next(override_get_db())
+        from fiscal_workflow.models.models import DocumentoFiscal
+        doc1 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230598765432000200550010000007777744567893",
+            tipo_documento="NF-e",
+            numero_nf="1",
+            valor_total=Decimal("100.00"),
+            data_emissao=datetime(2026, 4, 10),
+            data_competencia=datetime(2026, 4, 1)
+        )
+        doc2 = DocumentoFiscal(
+            empresa_id=emp_id,
+            chave_acesso="35230598765432000200550010000007777744567894",
+            tipo_documento="NF-e",
+            numero_nf="2",
+            valor_total=Decimal("200.00"),
+            data_emissao=datetime(2026, 6, 15),
+            data_competencia=datetime(2026, 6, 1)
+        )
+        db.add_all([doc1, doc2])
+        db.commit()
+        db.close()
+        
+        # 3. Chama o endpoint de listar competências
+        response = self.client.get(f"/empresas/{emp_id}/competencias")
+        self.assertEqual(response.status_code, 200)
+        comps = response.json()
+        
+        # Deve conter exatamente as competências das notas inseridas em ordem crescente
+        self.assertEqual(comps, ["2026-04", "2026-06"])
+        
+        # 4. Testa a listagem usando range no formato YYYY-MM
+        response_list = self.client.get(f"/documentos?empresa_id={emp_id}&data_competencia_inicio=2026-04&data_competencia_fim=2026-06")
+        self.assertEqual(len(response_list.json()), 2)
+
 if __name__ == "__main__":
     unittest.main()

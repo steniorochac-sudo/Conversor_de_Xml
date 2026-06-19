@@ -424,6 +424,25 @@ def editar_empresa(empresa_id: int, empresa_update: EmpresaUpdate, db: Session =
     db.refresh(empresa)
     return empresa
 
+@app.get("/empresas/{empresa_id}/competencias", response_model=List[str])
+def listar_competencias_empresa(empresa_id: int, db: Session = Depends(get_db)):
+    """Retorna as competências únicas de notas fiscais associadas a uma empresa (formato YYYY-MM)."""
+    empresa = db.query(Empresa).filter(Empresa.id == empresa_id).first()
+    if not empresa:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Empresa com ID {empresa_id} não encontrada."
+        )
+    
+    competencias = db.query(DocumentoFiscal.data_competencia)\
+        .filter(DocumentoFiscal.empresa_id == empresa_id)\
+        .filter(DocumentoFiscal.data_competencia != None)\
+        .distinct()\
+        .order_by(DocumentoFiscal.data_competencia.asc())\
+        .all()
+        
+    return [c[0].strftime("%Y-%m") for c in competencias if c[0]]
+
 # ==========================================
 # ENDPOINTS DO FLUXO DE DOCUMENTOS
 # ==========================================
@@ -760,13 +779,19 @@ def listar_documentos(
             
     if data_competencia_inicio:
         try:
-            dt_comp_inicio = datetime.fromisoformat(data_competencia_inicio)
+            if len(data_competencia_inicio) == 7:
+                dt_comp_inicio = datetime.strptime(data_competencia_inicio, "%Y-%m")
+            else:
+                dt_comp_inicio = datetime.fromisoformat(data_competencia_inicio)
             query = query.filter(DocumentoFiscal.data_competencia >= dt_comp_inicio)
         except ValueError:
             pass
     if data_competencia_fim:
         try:
-            dt_comp_fim = datetime.fromisoformat(data_competencia_fim).replace(hour=23, minute=59, second=59)
+            if len(data_competencia_fim) == 7:
+                dt_comp_fim = datetime.strptime(data_competencia_fim, "%Y-%m").replace(hour=23, minute=59, second=59)
+            else:
+                dt_comp_fim = datetime.fromisoformat(data_competencia_fim).replace(hour=23, minute=59, second=59)
             query = query.filter(DocumentoFiscal.data_competencia <= dt_comp_fim)
         except ValueError:
             pass
@@ -939,13 +964,19 @@ def apurar_consolidado_empresa(
             
     if data_competencia_inicio:
         try:
-            dt_comp_inicio = datetime.fromisoformat(data_competencia_inicio)
+            if len(data_competencia_inicio) == 7:
+                dt_comp_inicio = datetime.strptime(data_competencia_inicio, "%Y-%m")
+            else:
+                dt_comp_inicio = datetime.fromisoformat(data_competencia_inicio)
             query = query.filter(DocumentoFiscal.data_competencia >= dt_comp_inicio)
         except ValueError:
             pass
     if data_competencia_fim:
         try:
-            dt_comp_fim = datetime.fromisoformat(data_competencia_fim).replace(hour=23, minute=59, second=59)
+            if len(data_competencia_fim) == 7:
+                dt_comp_fim = datetime.strptime(data_competencia_fim, "%Y-%m").replace(hour=23, minute=59, second=59)
+            else:
+                dt_comp_fim = datetime.fromisoformat(data_competencia_fim).replace(hour=23, minute=59, second=59)
             query = query.filter(DocumentoFiscal.data_competencia <= dt_comp_fim)
         except ValueError:
             pass

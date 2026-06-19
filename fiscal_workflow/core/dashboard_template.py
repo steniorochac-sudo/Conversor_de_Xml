@@ -358,11 +358,15 @@ HTML_CONTENT = """<!DOCTYPE html>
                     </div>
                     <div>
                         <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Competência (De):</label>
-                        <input type="date" id="filter-competencia-inicio" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                        <select id="filter-competencia-inicio" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                            <option value="">Selecione...</option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Competência (Até):</label>
-                        <input type="date" id="filter-competencia-fim" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                        <select id="filter-competencia-fim" onchange="carregarDocumentos()" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-brand-500 text-slate-600 font-medium">
+                            <option value="">Selecione...</option>
+                        </select>
                     </div>
                 </div>
             </div>
@@ -1368,6 +1372,51 @@ HTML_CONTENT = """<!DOCTYPE html>
 
         let searchTimeout = null;
 
+        async function carregarCompetenciasDisponiveis(empresaId) {
+            const inicioSelect = document.getElementById('filter-competencia-inicio');
+            const fimSelect = document.getElementById('filter-competencia-fim');
+            
+            if (!empresaId) {
+                inicioSelect.innerHTML = '<option value="">Selecione...</option>';
+                fimSelect.innerHTML = '<option value="">Selecione...</option>';
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/empresas/${empresaId}/competencias`);
+                if (res.ok) {
+                    const comps = await res.json();
+                    
+                    const oldInicio = inicioSelect.value;
+                    const oldFim = fimSelect.value;
+
+                    let optionsHtml = '<option value="">Selecione...</option>';
+                    
+                    const nomesMeses = {
+                        "01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril",
+                        "05": "Maio", "06": "Junho", "07": "Julho", "08": "Agosto",
+                        "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro"
+                    };
+
+                    comps.forEach(comp => {
+                        const partes = comp.split('-');
+                        if (partes.length === 2) {
+                            const label = `${nomesMeses[partes[1]] || partes[1]}/${partes[0]}`;
+                            optionsHtml += `<option value="${comp}">${label}</option>`;
+                        }
+                    });
+
+                    inicioSelect.innerHTML = optionsHtml;
+                    fimSelect.innerHTML = optionsHtml;
+                    
+                    inicioSelect.value = oldInicio;
+                    fimSelect.value = oldFim;
+                }
+            } catch (err) {
+                console.error("Erro ao carregar competências disponíveis:", err);
+            }
+        }
+
         function filtrarComDelay() {
             if (searchTimeout) clearTimeout(searchTimeout);
             searchTimeout = setTimeout(() => {
@@ -1401,6 +1450,10 @@ HTML_CONTENT = """<!DOCTYPE html>
             const select = document.getElementById('select-empresa');
             const empresaId = select.value;
             const tbody = document.getElementById('documentos-tbody');
+
+            if (empresaId) {
+                await carregarCompetenciasDisponiveis(empresaId);
+            }
 
             if (!empresaId) {
                 document.getElementById('consolidado-section').classList.add('hidden');
