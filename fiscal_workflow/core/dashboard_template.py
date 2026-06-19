@@ -404,7 +404,7 @@ HTML_CONTENT = """<!DOCTYPE html>
                             <th class="px-6 py-4 text-right">Valor XML (Bruto)</th>
                             <th class="px-6 py-4 text-right">Valor Final (Staging)</th>
                             <th class="px-6 py-4">Status</th>
-                            <th class="px-6 py-4 text-center w-[180px] min-w-[180px]">Ações</th>
+                            <th class="px-6 py-4 text-center w-[220px] min-w-[220px]">Ações</th>
                         </tr>
                     </thead>
                     <tbody id="documentos-tbody" class="divide-y divide-slate-100 text-sm text-slate-600">
@@ -1541,6 +1541,7 @@ HTML_CONTENT = """<!DOCTYPE html>
 
                         // Ações desativadas se encerrado
                         const isEncerrado = doc.status_apuracao === "Encerrado";
+                        const isCancelado = doc.cstat === "101" || ["110", "301", "302"].includes(doc.cstat);
 
                         tr.innerHTML = `
                             <td class="px-6 py-4"><input type="checkbox" class="doc-checkbox rounded text-brand-500 focus:ring-brand-500" value="${doc.id}" onchange="atualizarAcoesLote()"></td>
@@ -1584,6 +1585,9 @@ HTML_CONTENT = """<!DOCTYPE html>
                                     </button>
                                     <button onclick="abrirEditarCompetencia(${doc.id}, '${doc.data_competencia ? doc.data_competencia.substring(0, 10) : ''}')" ${isEncerrado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Editar Competência">
                                         <i class="fa-solid fa-calendar-days"></i>
+                                    </button>
+                                    <button onclick="cancelarDocumento(${doc.id}, '${doc.chave_acesso}')" ${isEncerrado || isCancelado ? 'disabled' : ''} class="px-2.5 py-1.5 bg-rose-500 hover:bg-rose-600 disabled:opacity-30 text-white text-xs font-semibold rounded-lg transition-colors" title="Cancelar Nota Fiscal">
+                                        <i class="fa-solid fa-ban"></i>
                                     </button>
                                     <button onclick="deletarDocumento(${doc.id}, '${doc.chave_acesso}')" class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg transition-colors" title="Excluir Nota Fiscal">
                                         <i class="fa-solid fa-trash-can"></i>
@@ -1907,6 +1911,25 @@ HTML_CONTENT = """<!DOCTYPE html>
                 }
             } catch (err) {
                 showToast("Erro de rede ao excluir.", "error");
+            }
+        }
+
+        async function cancelarDocumento(id, chave) {
+            if (!confirm(`Tem certeza que deseja cancelar manualmente a nota fiscal chave: ${chave}? Esta ação recalculará e zerará todos os impostos desta nota!`)) {
+                return;
+            }
+
+            try {
+                const res = await fetch(`${API_URL}/documentos/${id}/cancelar`, { method: 'POST' });
+                if (res.ok) {
+                    showToast("Nota fiscal marcada como cancelada com sucesso!");
+                    await carregarDocumentos();
+                } else {
+                    const err = await res.json();
+                    showToast(err.detail || "Erro ao cancelar nota fiscal.", "error");
+                }
+            } catch (err) {
+                showToast("Erro de rede ao cancelar.", "error");
             }
         }
 

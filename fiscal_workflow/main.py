@@ -863,6 +863,32 @@ def encerrar_apuracao(documento_id: int, db: Session = Depends(get_db)):
     db.refresh(doc)
     return doc
 
+
+@app.post("/documentos/{documento_id}/cancelar", response_model=DocumentoResponse)
+def cancelar_documento(documento_id: int, db: Session = Depends(get_db)):
+    """
+    Cancela manualmente um documento fiscal alterando o seu cstat para '101'.
+    Bloqueia alterações caso o período esteja 'Encerrado'.
+    """
+    doc = db.query(DocumentoFiscal).filter(DocumentoFiscal.id == documento_id).first()
+    if not doc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, 
+            detail=f"Documento fiscal com ID {documento_id} não encontrado."
+        )
+
+    if doc.status_apuracao == StatusApuracao.ENCERRADO:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="Não é possível cancelar um documento fiscal em período Encerrado."
+        )
+
+    doc.cstat = "101"
+    db.commit()
+    db.refresh(doc)
+    return doc
+
+
 # ==========================================
 # MOTOR DE CÁLCULO DINÂMICO (STRATEGY PATTERN)
 # ==========================================

@@ -1139,5 +1139,55 @@ class TestFiscalAPI(unittest.TestCase):
         response_list = self.client.get(f"/documentos?empresa_id={emp_id}&data_competencia_inicio=2026-04&data_competencia_fim=2026-06")
         self.assertEqual(len(response_list.json()), 2)
 
+    def test_cancelamento_manual_endpoint(self):
+        """Valida que o endpoint POST /documentos/{id}/cancelar cancela a nota fiscal se o período estiver aberto, mas recusa se estiver encerrado."""
+        # 1. Cadastra empresa e faz upload de nota
+        response_empresa = self.client.post(
+            "/empresas",
+            json={
+                "cnpj": "88888888000199",
+                "razao_social": "Cancelamento Manual Ltda",
+                "regime_tributario": "Simples Nacional"
+            }
+        )
+        emp_id = response_empresa.json()["id"]
+        
+        xml_file = io.BytesIO(MOCK_NFE_XML.replace("12345678000199", "88888888000199").encode('utf-8'))
+        response_upload = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe.xml", xml_file, "text/xml"))]
+        )
+        doc_id = response_upload.json()[0]["id"]
+        
+        # 2. Cancela a nota manual
+        response_cancel = self.client.post(f"/documentos/{doc_id}/cancelar")
+        self.assertEqual(response_cancel.status_code, 200)
+        self.assertEqual(response_cancel.json()["cstat"], "101")
+        
+        # 3. Garante que os impostos e faturamento no consolidado agora são zero
+        response_consolidado = self.client.get(f"/empresas/{emp_id}/consolidado")
+        consolidado = response_consolidado.json()
+        self.assertEqual(float(consolidado["total_faturamento"]), 0.00)
+        self.assertEqual(float(consolidado["total_imposto"]), 0.00)
+        
+        # 4. Cria outra nota, encerra ela, e tenta cancelar
+        mock_xml_2 = MOCK_NFE_XML.replace(
+            "35230512345678000199550010000001231234567890", "35230588888888000199550010000001241234567890"
+        ).replace("12345678000199", "88888888000199")
+        xml_file_2 = io.BytesIO(mock_xml_2.encode('utf-8'))
+        
+        response_upload_2 = self.client.post(
+            "/documentos/upload",
+            files=[("files", ("nfe2.xml", xml_file_2, "text/xml"))]
+        )
+        doc_id_2 = response_upload_2.json()[0]["id"]
+        
+        # Encerra
+        self.client.post(f"/documentos/{doc_id_2}/encerrar")
+        
+        # Tenta cancelar (deve dar erro 400)
+        response_cancel_err = self.client.post(f"/documentos/{doc_id_2}/cancelar")
+        self.assertEqual(response_cancel_err.status_code, 400)
+
 if __name__ == "__main__":
     unittest.main()
